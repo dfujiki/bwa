@@ -527,6 +527,7 @@ int ksw_extend2_debug(int qlen, const uint8_t *query, int tlen, const uint8_t *t
 			if (h1 < 0) h1 = 0;
 		} else h1 = 0;
 		printf("%c\t", "ACGTN"[(int)target[i]]);
+		for (j = 0; j < beg; j++) { printf("-,-,-\t"); }
 		for (j = beg; LIKELY(j < end); ++j) {
 			// At the beginning of the loop: eh[j] = { H(i-1,j-1), E(i,j) }, f = F(i,j) and h1 = H(i,j-1)
 			// Similar to SSE2-SW, cells are computed in the following order:
@@ -575,7 +576,7 @@ int ksw_extend2_debug(int qlen, const uint8_t *query, int tlen, const uint8_t *t
 		beg = j;
 		for (j = end; LIKELY(j >= beg) && eh[j].h == 0 && eh[j].e == 0; --j);
 		end = j + 2 < qlen? j + 2 : qlen;
-		beg = 0; end = qlen; // uncomment this line for debugging
+		// beg = 0; end = qlen; // uncomment this line for debugging
 	}
 	free(eh); free(qp);
 	if (_qle) *_qle = max_j + 1;

@@ -730,15 +730,23 @@ void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac
 					printf("*** Left query: "); for (j = 0; j < s->qbeg; ++j) putchar("ACGTN"[(int)qs[j]]); putchar('\n');
 				}
 				a->score = ksw_extend2(s->qbeg, qs, tmp, rs, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[0], opt->pen_clip5, opt->zdrop, s->len * opt->a, &qle, &tle, &gtle, &gscore, &max_off[0]);
-				int hw_socre = ksw_extend_hw(s->qbeg, qs, tmp, rs, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[0], opt->pen_clip5, opt->zdrop, s->len * opt->a, &qle, &tle, &gtle, &gscore, &max_off[0]);
-				if (a->score != hw_socre) {
+				int hw_gscore, hw_qle, hw_tle, hw_gtle;
+				int hw_score = ksw_extend_hw(s->qbeg, qs, tmp, rs, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[0], opt->pen_clip5, opt->zdrop, s->len * opt->a, &hw_qle, &hw_tle, &hw_gtle, &hw_gscore, &max_off[0]);
+				if (a->score != hw_score || gscore != hw_gscore && hw_gscore > 0) {
+				// if (((gscore <= 0 || gscore <= a->score - opt->pen_clip5) && (!(hw_gscore <= 0 || hw_gscore <= hw_score - opt->pen_clip5) || (a->score != hw_score))) || (!(gscore <= 0 || gscore <= a->score - opt->pen_clip5) && ((hw_gscore <= 0 || hw_gscore <= hw_score - opt->pen_clip5) || gscore != hw_gscore))) {
 					int j;
-					printf("@@@ initial: %d\t ref_score: %d\t computed: %d\n", s->len * opt->a, a->score, hw_socre);
-					printf("Score Mismatch! Initial score: %d\n", s->len * opt->a);
-					printf("*** Left ref:   "); for (j = 0; j < tmp; ++j) putchar("ACGTN"[(int)rs[j]]); putchar('\n');
+					printf("@@@ initial: %d\t ref_score: %d\t computed: %d\t ref_gscore: %d\t computed_g:%d\n", s->len * opt->a, a->score, hw_score, gscore, hw_gscore);
+					printf("Score Mismatch! (%d, %d, %d)\n", qle, tle, gtle);
 					printf("*** Left query: "); for (j = 0; j < s->qbeg; ++j) putchar("ACGTN"[(int)qs[j]]); putchar('\n');
+					printf("*** Left ref:   "); for (j = 0; j < tmp; ++j) putchar("ACGTN"[(int)rs[j]]); putchar('\n');
 				// a->score = ksw_extend2_debug(s->qbeg, qs, tmp, rs, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[0], opt->pen_clip5, opt->zdrop, s->len * opt->a, &qle, &tle, &gtle, &gscore, &max_off[0]);
 					// exit(1);
+				}
+				else if (((gscore <= 0 || gscore <= a->score - opt->pen_clip5) && (hw_qle != qle || hw_tle != tle)) || (!(gscore <= 0 || gscore <= a->score - opt->pen_clip5) && (hw_gtle != gtle)) && hw_gscore > 0) {
+					int j;
+					printf("### Index Mismatch! %d (%d, %d, %d) (%d, %d, %d)\n", s->len * opt->a, qle, tle, gtle, hw_qle, hw_tle, hw_gtle);
+					printf("*** Left query: "); for (j = 0; j < s->qbeg; ++j) putchar("ACGTN"[(int)qs[j]]); putchar('\n');
+					printf("*** Left ref:   "); for (j = 0; j < tmp; ++j) putchar("ACGTN"[(int)rs[j]]); putchar('\n');
 				}
 				if (bwa_verbose >= 4) { printf("*** Left extension: prev_score=%d; score=%d; bandwidth=%d; max_off_diagonal_dist=%d\n", prev, a->score, aw[0], max_off[0]); fflush(stdout); }
 				if (a->score == prev || max_off[0] < (aw[0]>>1) + (aw[0]>>2)) break;
@@ -768,15 +776,23 @@ void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac
 					printf("*** Right query: "); for (j = 0; j < l_query - qe; ++j) putchar("ACGTN"[(int)query[qe+j]]); putchar('\n');
 				}
 				a->score = ksw_extend2(l_query - qe, query + qe, rmax[1] - rmax[0] - re, rseq + re, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[1], opt->pen_clip3, opt->zdrop, sc0, &qle, &tle, &gtle, &gscore, &max_off[1]);
-				int hw_socre = ksw_extend_hw(l_query - qe, query + qe, rmax[1] - rmax[0] - re, rseq + re, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[1], opt->pen_clip3, opt->zdrop, sc0, &qle, &tle, &gtle, &gscore, &max_off[1]);
-				if (a->score != hw_socre) {
+				int hw_gscore, hw_qle, hw_tle, hw_gtle;
+				int hw_score = ksw_extend_hw(l_query - qe, query + qe, rmax[1] - rmax[0] - re, rseq + re, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[1], opt->pen_clip3, opt->zdrop, sc0, &hw_qle, &hw_tle, &hw_gtle, &hw_gscore, &max_off[1]);
+				if (a->score != hw_score || gscore != hw_gscore && hw_gscore > 0) {
+				// if (((hw_gscore <= 0 || hw_gscore <= hw_score - opt->pen_clip5) && (a->score != hw_score)) || ((!(hw_gscore <= 0 || hw_gscore <= hw_score - opt->pen_clip5)) && gscore != hw_gscore)) {
 					int j;
-					printf("@@@ initial: %d\t ref_score: %d\t computed: %d\n", sc0, a->score, hw_socre);
-					printf("Score Mismatch!\n");
-					printf("*** Right ref:   "); for (j = 0; j < rmax[1] - rmax[0] - re; ++j) putchar("ACGTN"[(int)rseq[re+j]]); putchar('\n');
+					printf("@@@ initial: %d\t ref_score: %d\t computed: %d\t ref_gscore: %d\t computed_g:%d\n", sc0, a->score, hw_score, gscore, hw_gscore);
+					printf("Score Mismatch! (%d, %d, %d)\n", qle, tle, gtle);
 					printf("*** Right query: "); for (j = 0; j < l_query - qe; ++j) putchar("ACGTN"[(int)query[qe+j]]); putchar('\n');
+					printf("*** Right ref:   "); for (j = 0; j < rmax[1] - rmax[0] - re; ++j) putchar("ACGTN"[(int)rseq[re+j]]); putchar('\n');
 				// a->score = ksw_extend2_debug(l_query - qe, query + qe, rmax[1] - rmax[0] - re, rseq + re, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[1], opt->pen_clip3, opt->zdrop, sc0, &qle, &tle, &gtle, &gscore, &max_off[1]);
 					// exit(1);
+				}
+				else if (((gscore <= 0 || gscore <= a->score - opt->pen_clip5) && (hw_qle != qle || hw_tle != tle)) || (!(gscore <= 0 || gscore <= a->score - opt->pen_clip5) && (hw_gtle != gtle)) && hw_gscore > 0) {
+					int j;
+					printf("### Index Mismatch! %d (%d, %d, %d) (%d, %d, %d)\n", sc0, qle, tle, gtle, hw_qle, hw_tle, hw_gtle);
+					printf("*** Right query: "); for (j = 0; j < l_query - qe; ++j) putchar("ACGTN"[(int)query[qe+j]]); putchar('\n');
+					printf("*** Right ref:   "); for (j = 0; j < rmax[1] - rmax[0] - re; ++j) putchar("ACGTN"[(int)rseq[re+j]]); putchar('\n');
 				}
 				if (bwa_verbose >= 4) { printf("*** Right extension: prev_score=%d; score=%d; bandwidth=%d; max_off_diagonal_dist=%d\n", prev, a->score, aw[1], max_off[1]); fflush(stdout); }
 				if (a->score == prev || max_off[1] < (aw[1]>>1) + (aw[1]>>2)) break;
