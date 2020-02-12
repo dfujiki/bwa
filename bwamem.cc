@@ -1451,6 +1451,8 @@ void fpga_func_model(const mem_opt_t *opt, std::vector<union SeedExLine>& load_b
         re.tle = tle;
 		free(query);
 		free(target);
+		// test exception
+		// re.exception = 1;
     }
 }
 
@@ -2291,8 +2293,12 @@ mem_aln_t mem_reg2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *
 
 
 
-void get_scores_left(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, const mem_chain_t *c, mem_alnreg_v *in_a, uint32_t reg_id){
+void get_scores_left(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, const mem_chain_t *c, mem_alnreg_v *in_a, uint32_t reg_id, bool *need_rerun){
 
+	if (re->exception & 0x5) {
+		*need_rerun = true;
+		return;
+	}
 
     // mem_alnreg_t *a = kv_pushp(mem_alnreg_t, *in_a);
 	// memset(a, 0, sizeof(mem_alnreg_t));
@@ -2322,8 +2328,12 @@ void get_scores_left(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, 
 
 }
 
-void get_scores_right(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, int l_query, const mem_chain_t *c, mem_alnreg_v *in_a, uint32_t reg_id){
+void get_scores_right(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, int l_query, const mem_chain_t *c, mem_alnreg_v *in_a, uint32_t reg_id, bool *need_rerun){
 
+	if (re->exception & 0x5) {
+		*need_rerun = true;
+		return;
+	}
 
     mem_alnreg_t *a = &in_a->a[reg_id];
 
@@ -2359,7 +2369,85 @@ void get_scores_right(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns,
 	}
 }
 
-void get_all_scores(const mem_opt_t *opt, uint8_t *read_buffer,queue_t *w,fpga_data_out_v * f1v, std::vector<struct extension_meta_t>& extension_meta, mem_alnreg_v_v *alnregs){
+void rerun_left_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, mem_chain_t *c, mem_alnreg_v *av, int reg_id){
+    mem_alnreg_t *a = &av->a[reg_id];
+	const mem_seed_t *s = &c->seeds[(uint32_t)reg_id];
+	if (s->qbeg) { // left extension
+		// printf("@@@ Rerunning rerun left\n");
+		int i, rid, aw[2], max_off[2];
+		int64_t rmax[2], tmp;
+        fetch_rmaxs(opt, bns,pac, l_query, (uint8_t*) query, c, NULL, &rmax[0], &rmax[1]);
+		uint8_t *rseq = 0;
+		rseq = bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
+		uint8_t *rs, *qs;
+		int qle, tle, gtle, gscore;
+		qs = malloc(s->qbeg);
+		for (i = 0; i < s->qbeg; ++i) qs[i] = query[s->qbeg - 1 - i];
+		tmp = s->rbeg - rmax[0];
+		rs = malloc(tmp);
+		for (i = 0; i < tmp; ++i) rs[i] = rseq[tmp - 1 - i];
+		for (i = 0; i < MAX_BAND_TRY; ++i) {
+			int prev = a->score;
+			aw[0] = opt->w << i;
+			if (bwa_verbose >= 4) {
+				int j;
+				printf("*** Left ref:   "); for (j = 0; j < tmp; ++j) putchar("ACGTN"[(int)rs[j]]); putchar('\n');
+				printf("*** Left query: "); for (j = 0; j < s->qbeg; ++j) putchar("ACGTN"[(int)qs[j]]); putchar('\n');
+			}
+			a->score = ksw_extend2(s->qbeg, qs, tmp, rs, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[0], opt->pen_clip5, opt->zdrop, s->len * opt->a, &qle, &tle, &gtle, &gscore, &max_off[0]);
+			if (bwa_verbose >= 4) { printf("*** Left extension: prev_score=%d; score=%d; bandwidth=%d; max_off_diagonal_dist=%d\n", prev, a->score, aw[0], max_off[0]); fflush(stdout); }
+			if (a->score == prev || max_off[0] < (aw[0]>>1) + (aw[0]>>2)) break;
+		}
+		// check whether we prefer to reach the end of the query
+		if (gscore <= 0 || gscore <= a->score - opt->pen_clip5) { // local extension
+			a->qb = s->qbeg - qle, a->rb = s->rbeg - tle;
+			a->truesc = a->score;
+		} else { // to-end extension
+			a->qb = 0, a->rb = s->rbeg - gtle;
+			a->truesc = gscore;
+		}
+		free(qs); free(rs);
+	} else a->score = a->truesc = s->len * opt->a, a->qb = 0, a->rb = s->rbeg;
+}
+
+void rerun_right_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, mem_chain_t *c, mem_alnreg_v *av, int reg_id){
+    mem_alnreg_t *a = &av->a[reg_id];
+	const mem_seed_t *s = &c->seeds[(uint32_t)reg_id];
+	if (s->qbeg + s->len != l_query) { // right extension
+		// printf("@@@ Rerunning rerun right\n");
+		int i, rid, aw[2], max_off[2];
+		int64_t rmax[2];
+        fetch_rmaxs(opt, bns,pac, l_query, (uint8_t*) query, c, NULL, &rmax[0], &rmax[1]);
+		uint8_t *rseq = 0;
+		rseq = bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
+		int qle, tle, qe, re, gtle, gscore, sc0 = a->score;
+		qe = s->qbeg + s->len;
+		re = s->rbeg + s->len - rmax[0];
+		assert(re >= 0);
+		for (i = 0; i < MAX_BAND_TRY; ++i) {
+			int prev = a->score;
+			aw[1] = opt->w << i;
+			if (bwa_verbose >= 4) {
+				int j;
+				printf("*** Right ref:   "); for (j = 0; j < rmax[1] - rmax[0] - re; ++j) putchar("ACGTN"[(int)rseq[re+j]]); putchar('\n');
+				printf("*** Right query: "); for (j = 0; j < l_query - qe; ++j) putchar("ACGTN"[(int)query[qe+j]]); putchar('\n');
+			}
+			a->score = ksw_extend2(l_query - qe, query + qe, rmax[1] - rmax[0] - re, rseq + re, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[1], opt->pen_clip3, opt->zdrop, sc0, &qle, &tle, &gtle, &gscore, &max_off[1]);
+			if (bwa_verbose >= 4) { printf("*** Right extension: prev_score=%d; score=%d; bandwidth=%d; max_off_diagonal_dist=%d\n", prev, a->score, aw[1], max_off[1]); fflush(stdout); }
+			if (a->score == prev || max_off[1] < (aw[1]>>1) + (aw[1]>>2)) break;
+		}
+		// similar to the above
+		if (gscore <= 0 || gscore <= a->score - opt->pen_clip3) { // local extension
+			a->qe = qe + qle, a->re = rmax[0] + re + tle;
+			a->truesc += a->score - sc0;
+		} else { // to-end extension
+			a->qe = l_query, a->re = rmax[0] + re + gtle;
+			a->truesc += gscore - sc0;
+		}
+	} else a->qe = l_query, a->re = s->rbeg + s->len;
+}
+
+void get_all_scores(const worker_t *w, uint8_t *read_buffer,queue_t *qe,fpga_data_out_v * f1v, std::vector<struct extension_meta_t>& extension_meta, mem_alnreg_v_v *alnregs){
     int i = 0;
     for(i=0;i<f1v->n;i++){
         if(bwa_verbose >= 15){
@@ -2376,28 +2464,36 @@ void get_all_scores(const mem_opt_t *opt, uint8_t *read_buffer,queue_t *w,fpga_d
         struct ResultLine* results = ((struct ResultLine*) read_buffer) + i;
 
         // memcpy(&read_id,read_buffer + i*64 + 1,4);
-        // read_id = read_id - w->starting_read_id;
+        // read_id = read_id - qe->starting_read_id;
 
         for (int k = 0; k < results->preamble[0]; ++k) {
             struct ResultEntry * re = &results->results[k];
             uint32_t read_idx = extension_meta.at(re->seq_id).read_idx;
-            // uint32_t read_id = w->seqs[read_idx]->read_id;
+            // uint32_t read_id = qe->seqs[read_idx]->read_id;
             uint32_t chain_id = extension_meta.at(re->seq_id).chain_id;
             uint32_t seed_id = extension_meta.at(re->seq_id).seed_id;
             //TODO: Fix this if condition
             if(read_idx < BATCH_SIZE){
             //assert(read_id < BATCH_SIZE);
                 if(f1v->a[read_idx].fpga_entry_present == 1){
+					bool need_rerun = false;
                     if (f1v->read_right) {
-                        get_scores_right(opt, re, global_bns, w->seqs[read_idx]->l_seq,&w->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id);
+                        get_scores_right(w->opt, re, global_bns, qe->seqs[read_idx]->l_seq,&qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id, &need_rerun);
+						if (need_rerun) {
+							rerun_right_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, (const uint8_t *)qe->seqs[i]->seq, &qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id);
+						}
                     } else {
-                        get_scores_left(opt, re, global_bns,&w->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id);
+                        get_scores_left(w->opt, re, global_bns,&qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id, &need_rerun);
+						if (need_rerun) {
+							rerun_left_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, (const uint8_t *)qe->seqs[i]->seq, &qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id);
+						}
+
                         // transfer score for sc0 in loadbuf2
                         union SeedExLine * right_ext_entry;
                         if (right_ext_entry = f1v->load_buffer_entry_idx2->at(re->seq_id)) {
                             right_ext_entry->ty1.params.init_score = re->lscore;
                         }
-                    }
+					}
                         // get_scores(1read_buffer + (i*64), global_bns,w->regs[read_id]);
     // void get_scores_right(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, int l_query, const mem_chain_t *c, mem_alnreg_v *in_a, uint16_t *reg_id){
     //void get_scores_left(const mem_opt_t *opt, uint8_t *read_buffer,const bntseq_t *bns, const mem_chain_t *c, mem_alnreg_v *in_a, uint16_t *reg_id){
@@ -2411,7 +2507,7 @@ void get_all_scores(const mem_opt_t *opt, uint8_t *read_buffer,queue_t *w,fpga_d
 }
 
 
-void read_scores_from_fpga(const mem_opt_t *opt, pci_bar_handle_t pci_bar_handle,queue_t* w, fpga_data_out_v * f1v, int channel, std::vector<struct extension_meta_t>& extension_meta){
+void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,queue_t* qe, fpga_data_out_v * f1v, int channel, std::vector<struct extension_meta_t>& extension_meta){
     int rc = 0;
      
     if(f1v->n != 0){   
@@ -2424,7 +2520,7 @@ void read_scores_from_fpga(const mem_opt_t *opt, pci_bar_handle_t pci_bar_handle
 #ifdef ENABLE_FPGA
         uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G);
 
-        get_all_scores(opt,read_buffer,w,f1v,extension_meta);
+        get_all_scores(w,read_buffer,qe,f1v,extension_meta);
 
         if(read_buffer) {
             free(read_buffer);
@@ -2765,7 +2861,7 @@ static void fpga_worker(void *data){
                 std::vector<union SeedExLine> read_buffer;
                 f1v.read_right = false;
                 fpga_func_model(w->opt, load_buffer1, load_buffer_entry_idx1, read_buffer);
-                get_all_scores(w->opt,(uint8_t *)read_buffer.data(),qe,&f1v,extension_meta, alnregs);
+                get_all_scores(w,(uint8_t *)read_buffer.data(),qe,&f1v,extension_meta, alnregs);
 #endif
 
 
@@ -2814,7 +2910,7 @@ static void fpga_worker(void *data){
                 read_buffer.clear();
                 f1v.read_right = true;
                 fpga_func_model(w->opt, load_buffer2, load_buffer_entry_idx2, read_buffer);
-                get_all_scores(w->opt,(uint8_t *)read_buffer.data(),qe,&f1v,extension_meta, alnregs);
+                get_all_scores(w,(uint8_t *)read_buffer.data(),qe,&f1v,extension_meta, alnregs);
 #endif
             }
 
