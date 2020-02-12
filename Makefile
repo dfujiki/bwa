@@ -1,6 +1,7 @@
 CC=			gcc
 #CC=			clang --analyze
-CFLAGS=		-g -Wall -Wno-unused-function -O2
+CFLAGS=		-g -Wall -Wno-unused-function -O0
+CXXFLAGS=		-g -Wall -Wno-unused-function -O0 --std=c++11 -fpermissive
 WRAP_MALLOC=-DUSE_MALLOC_WRAPPERS
 AR=			ar
 DFLAGS=		-DHAVE_PTHREAD $(WRAP_MALLOC)
@@ -14,6 +15,7 @@ PROG=		bwa
 #INCLUDES=	
 INCLUDES = -I$(SDK_DIR)/userspace/include
 LIBS=		-lm -lz -lpthread -lfpga_mgmt
+LIBS=		-lm -lz -lpthread
 SUBDIRS=	.
 
 ifeq ($(shell uname -s),Linux)
@@ -28,7 +30,7 @@ endif
 all:$(PROG)
 
 bwa:libbwa.a $(AOBJS) main.o
-		$(CC) $(CFLAGS) $(DFLAGS) $(AOBJS) main.o -o $@ -L. -lbwa $(LIBS)
+		$(CXX) $(CFLAGS) $(DFLAGS) $(AOBJS) main.o -o $@ -L. -lbwa $(LIBS)
 
 bwamem-lite:libbwa.a example.o
 		$(CC) $(CFLAGS) $(DFLAGS) example.o -o $@ -L. -lbwa $(LIBS)

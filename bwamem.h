@@ -4,9 +4,11 @@
 #include "bwt.h"
 #include "bntseq.h"
 #include "bwa.h"
+#ifdef ENABLE_FPGA
 #include "dma_common.h"
 #include <fpga_pci.h>
 #include <fpga_mgmt.h>
+#endif
 
 #define MEM_MAPQ_COEF 30.0
 #define MEM_MAPQ_MAX  60
@@ -82,6 +84,7 @@ typedef struct {
 
 typedef struct { size_t n, m; mem_alnreg_t *a; } mem_alnreg_v;
 
+typedef struct { size_t n, m; mem_alnreg_v *a; } mem_alnreg_v_v;
 
 
 
@@ -111,40 +114,11 @@ typedef struct { size_t n, m; mem_chain_t *a;  } mem_chain_v;
 
 
 
-
-
-typedef struct {
-        // TODO add alignment entries
-        uint8_t score;
-        int fpga_entry_present;
-
-} fpga_data_out_t;
-
-
-
-
-
-
-
-typedef struct {
-    size_t n,m;
-    fpga_data_out_t *a; 
-} fpga_data_out_v;
-
-
 typedef struct {
 	int low, high;   // lower and upper bounds within which a read pair is considered to be properly paired
 	int failed;      // non-zero if the orientation is not supported by sufficient data
 	double avg, std; // mean and stddev of the insert size distribution
 } mem_pestat_t;
-
-
-
-
-
-
-
-
 
 
 
@@ -168,9 +142,16 @@ typedef struct {
 	bwtintv_v mem, mem1, *tmpv[2];
 } smem_aux_t;
 
+#ifndef ENABLE_FPGA
+typedef int pci_bar_handle_t;
+// typedef int fpga_pci_conn;
+#endif
 
-
-
+typedef struct {
+    int write_fd;
+    int read_fd;
+    pci_bar_handle_t pci_bar_handle;
+} fpga_pci_data_t;
 
 #ifdef __cplusplus
 extern "C" {

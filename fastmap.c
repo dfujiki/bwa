@@ -13,11 +13,18 @@
 #include "bntseq.h"
 #include "kseq.h"
 #include "memsort.h"
-#include "dma_common.h"
 
+#ifdef ENABLE_FPGA
+#include "dma_common.h"
 #include <fpga_pci.h>
 #include <fpga_mgmt.h>
 #include <utils/lcd.h>
+#else
+int write_to_fpga(int write_fd, uint8_t * buffer, int len, uint64_t addr){};
+void close_read_queue(int read_fd){};
+void close_write_queue(int write_fd){};
+void close_ocl_bus(pci_bar_handle_t pci_bar_handle){};
+#endif
 #include <stdio.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -63,6 +70,7 @@ static uint16_t pci_device_id = 0xF000;
 
 
 
+#ifdef ENABLE_FPGA
 static int
 check_slot_config(int slot_id)
 {
@@ -108,6 +116,7 @@ int fastmap_write_to_fpga(pci_bar_handle_t pci_bar_handle, uint64_t offset, uint
     rc = fpga_pci_write_burst(pci_bar_handle, channel * MEM_16G + offset, buffer, buffer_size);
     return rc;
 }
+#endif
 
 void fastmap_push_to_lsb_64(uint32_t *ar, int size, uint64_t new_char, int shift){
     int carry = 0;
@@ -510,7 +519,7 @@ int main_mem(int argc, char *argv[])
 
     
     int rc = 0;
-    
+#ifdef ENABLE_FPGA
     // Initialize bar handle for data transfer to FPGA
     
     //rc = fpga_pci_attach(0, 0, 4, BURST_CAPABLE, &fm_pci_bar_handle);
@@ -534,6 +543,8 @@ int main_mem(int argc, char *argv[])
 
     // Write the pac to FPGA
     write_pac_to_fpga(aux.idx->pac,aux.idx->bns->l_pac,channel, fpga_mem_write_offset1);
+
+#endif
 
     int64_t l_pac_2 = aux.idx->bns->l_pac;
     aux.idx->bns->l_pac = (l_pac_2>>1);

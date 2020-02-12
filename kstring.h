@@ -110,6 +110,12 @@ static inline int kputl(long c, kstring_t *s)
 	return 0;
 }
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 int ksprintf(kstring_t *s, const char *fmt, ...);
+#ifdef __cplusplus
+}
+#endif
 
 #endif
