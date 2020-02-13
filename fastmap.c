@@ -547,7 +547,7 @@ int main_mem(int argc, char *argv[])
 #endif
 
     int64_t l_pac_2 = aux.idx->bns->l_pac;
-    aux.idx->bns->l_pac = (l_pac_2>>1);
+    // aux.idx->bns->l_pac = (l_pac_2>>1);
 
 	bwa_print_sam_hdr(aux.idx->bns, hdr_line);
 	aux.actual_chunk_size = fixed_chunk_size > 0? fixed_chunk_size : opt->chunk_size * opt->n_threads;
