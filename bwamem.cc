@@ -73,19 +73,19 @@ typedef struct{
 	mem_alnreg_v ** regs;
 	mem_chain_v ** chains;
 	int64_t num;
-    int64_t starting_read_id;
+	int64_t starting_read_id;
 
-    // For loading
-    int last_entry;
+	// For loading
+	int last_entry;
 } queue_t;
 
 
 typedef struct {
-    queue_t **buf;
-    long head, tail;
-    int full, empty;
-    pthread_mutex_t *mut;
-    pthread_cond_t *notFull, *notEmpty;
+	queue_t **buf;
+	long head, tail;
+	int full, empty;
+	pthread_mutex_t *mut;
+	pthread_cond_t *notFull, *notEmpty;
 } queue;
 
 
@@ -105,7 +105,7 @@ typedef struct {
 	smem_aux_t **aux;
 	bseq1_t *seqs;
 	int64_t n_processed;
-    queue *queue1;
+	queue *queue1;
 } worker_t;
 
 
@@ -118,23 +118,23 @@ typedef struct {
 	const bntseq_t *bns;
 	const uint8_t *pac;
 	const mem_pestat_t *pes;
-    queue *queue1;
+	queue *queue1;
 } worker2_t;
 
 typedef struct {
-    worker_t *w_master;     // Location of master with all sequences
-    int tid;                // Thread id
+	worker_t *w_master;     // Location of master with all sequences
+	int tid;                // Thread id
 
-    // Sequences processed by any thread will be all seqs starting from tid*BATCH_SIZE;
-    // next batch to be processed will be opt->n_threads*BATCH_SIZE
+	// Sequences processed by any thread will be all seqs starting from tid*BATCH_SIZE;
+	// next batch to be processed will be opt->n_threads*BATCH_SIZE
 
 } worker_slave_t;
 
 
 typedef struct {
-    queue *q1;      // Queue for stage 1 - 2 ( worker1_MT  |   q1   | fpga_worker)
-    queue *q2;      // Queue for stage 2 - 3 ( fpga_worker |   q2   | worker2_MT)
-    worker_t * w;
+	queue *q1;      // Queue for stage 1 - 2 ( worker1_MT  |   q1   | fpga_worker)
+	queue *q2;      // Queue for stage 2 - 3 ( fpga_worker |   q2   | worker2_MT)
+	worker_t * w;
 } queue_coll;       // Collection of queues
 
 
@@ -150,87 +150,87 @@ uint64_t total_seeds = 0;
 
 queue *queueInit (void)
 {
-    queue *q;
+	queue *q;
 
-    q = (queue *)malloc (sizeof (queue));
-    if (q == NULL) return (NULL);
+	q = (queue *)malloc (sizeof (queue));
+	if (q == NULL) return (NULL);
 
-    q->empty = 1;
-    q->full = 0;
-    q->head = 0;
-    q->tail = 0;
-    q->mut = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t));
-    pthread_mutex_init (q->mut, NULL);
-    q->notFull = (pthread_cond_t *) malloc (sizeof (pthread_cond_t));
-    pthread_cond_init (q->notFull, NULL);
-    q->notEmpty = (pthread_cond_t *) malloc (sizeof (pthread_cond_t));
-    pthread_cond_init (q->notEmpty, NULL);
+	q->empty = 1;
+	q->full = 0;
+	q->head = 0;
+	q->tail = 0;
+	q->mut = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t));
+	pthread_mutex_init (q->mut, NULL);
+	q->notFull = (pthread_cond_t *) malloc (sizeof (pthread_cond_t));
+	pthread_cond_init (q->notFull, NULL);
+	q->notEmpty = (pthread_cond_t *) malloc (sizeof (pthread_cond_t));
+	pthread_cond_init (q->notEmpty, NULL);
 
-    q->buf = (queue_t**) malloc(QUEUESIZE * sizeof(queue_t*));
-    
-    return (q);
+	q->buf = (queue_t**) malloc(QUEUESIZE * sizeof(queue_t*));
+	
+	return (q);
 }
 void queueDelete (queue *q)
 {
-    pthread_mutex_destroy (q->mut);
-    free (q->mut);      
-    pthread_cond_destroy (q->notFull);
-    free (q->notFull);
-    pthread_cond_destroy (q->notEmpty);
-    free (q->notEmpty);
-    free (q->buf);
-    free (q);
+	pthread_mutex_destroy (q->mut);
+	free (q->mut);      
+	pthread_cond_destroy (q->notFull);
+	free (q->notFull);
+	pthread_cond_destroy (q->notEmpty);
+	free (q->notEmpty);
+	free (q->buf);
+	free (q);
 }
 void queueAdd (queue *q, queue_t* in)
 {
-    q->buf[q->tail] = in;
-    q->tail++;
-    if (q->tail == QUEUESIZE)
-        q->tail = 0;
-    if (q->tail == q->head)
-        q->full = 1;
-    q->empty = 0;
+	q->buf[q->tail] = in;
+	q->tail++;
+	if (q->tail == QUEUESIZE)
+		q->tail = 0;
+	if (q->tail == q->head)
+		q->full = 1;
+	q->empty = 0;
 
-    return;
+	return;
 }
 void queueDel (queue *q, queue_t **out)
 {
-    *out = q->buf[q->head];
+	*out = q->buf[q->head];
 
-    q->head++;
-    if (q->head == QUEUESIZE)
-        q->head = 0;
-    if (q->head == q->tail)
-        q->empty = 1;
-    q->full = 0;
+	q->head++;
+	if (q->head == QUEUESIZE)
+		q->head = 0;
+	if (q->head == q->tail)
+		q->empty = 1;
+	q->full = 0;
 
-    return;
+	return;
 }
 
 int fpga_verbose = 0;
 
-    // FPGA Write Buffers
+	// FPGA Write Buffers
 
 
-    const uint32_t write_buffer_read_entry_length = 64;    // Each read entry is 64 bytes
-    const uint32_t write_buffer_seed_entry_length = 32;    // Each seed entry is 32 bytes
-    const uint32_t write_buffer_num_entries = 256;
-    const uint32_t write_buffer_capacity = 256 * 64;
-    const uint32_t max_write_buffer_index = 256 * 64;
+	const uint32_t write_buffer_read_entry_length = 64;    // Each read entry is 64 bytes
+	const uint32_t write_buffer_seed_entry_length = 32;    // Each seed entry is 32 bytes
+	const uint32_t write_buffer_num_entries = 256;
+	const uint32_t write_buffer_capacity = 256 * 64;
+	const uint32_t max_write_buffer_index = 256 * 64;
 
 
-    uint64_t fpga_mem_write_offset = 0;
+	uint64_t fpga_mem_write_offset = 0;
 
-    uint32_t vled;
-    uint32_t vdip;
-    
-    pci_bar_handle_t bw_pci_bar_handle;
+	uint32_t vled;
+	uint32_t vdip;
+	
+	pci_bar_handle_t bw_pci_bar_handle;
 
-    fpga_pci_conn * fpga_pci_local;
+	fpga_pci_conn * fpga_pci_local;
 
 
-    struct timeval s2_waitq1_st, s2_waitq1_et;
-    int total_s1_waitq1_time = 0;
+	struct timeval s2_waitq1_st, s2_waitq1_et;
+	int total_s1_waitq1_time = 0;
 
 
 
@@ -804,180 +804,180 @@ static inline int cal_max_gap(const mem_opt_t *opt, int qlen)
 
 
 void encode_read_data(char * read_seq, int length, uint32_t read_id, uint8_t *ar) {
-    //memset(ar, 0, ar_size*sizeof(uint8_t));
-    
-    int i = 0; 
+	//memset(ar, 0, ar_size*sizeof(uint8_t));
+	
+	int i = 0; 
 
-    if(bwa_verbose >= 18){
-        printf("[READ]0,%u,%d,",read_id,length);
-        int j = 0;
-        for(j=0;j<length;j++){
-            if(read_seq[j] == 0) {
-                printf("A");
-            }   
-            else if(read_seq[j] == 1){
-                printf("C");
-            } 
-            else if(read_seq[j] == 2){
-                printf("G");
-            } 
-            else if(read_seq[j] == 3){
-                printf("T");
-            }
-            else {
-                printf("N");
-            }
-        }
-        printf(",\n");
+	if(bwa_verbose >= 18){
+		printf("[READ]0,%u,%d,",read_id,length);
+		int j = 0;
+		for(j=0;j<length;j++){
+			if(read_seq[j] == 0) {
+				printf("A");
+			}   
+			else if(read_seq[j] == 1){
+				printf("C");
+			} 
+			else if(read_seq[j] == 2){
+				printf("G");
+			} 
+			else if(read_seq[j] == 3){
+				printf("T");
+			}
+			else {
+				printf("N");
+			}
+		}
+		printf(",\n");
 
-    }
+	}
 
-    ar[0] = 1;
-    memcpy(ar+1,&read_id,4);
-    ar[5] = (uint8_t)length; 
+	ar[0] = 1;
+	memcpy(ar+1,&read_id,4);
+	ar[5] = (uint8_t)length; 
 
-    // Use a counter for the number of bits already encoded. Never go beyond 8.
-    // Encode the char and increment the counter by 3. 
-    // If the number is less than 3, (3-x) is the bits to be put in the 
-    // previous entry and x bits in the new entry
+	// Use a counter for the number of bits already encoded. Never go beyond 8.
+	// Encode the char and increment the counter by 3. 
+	// If the number is less than 3, (3-x) is the bits to be put in the 
+	// previous entry and x bits in the new entry
 
-    int count = 0;
-    int buffer_index = 6;
-    uint8_t read_char = 0;
+	int count = 0;
+	int buffer_index = 6;
+	uint8_t read_char = 0;
 
-    for(i=0;i<length;i++){
-        if(read_seq[i] == 0) {
-            read_char = 0;
-        }   
-        else if(read_seq[i] == 1){
-            read_char = 1;
-        } 
-        else if(read_seq[i] == 2){
-            read_char = 2;
-        } 
-        else if(read_seq[i] == 3){
-            read_char = 3;
-        }
-        else{ 
-            read_char = 4;
-        }
-        if(count == 0){
-            count += 3;
-            ar[buffer_index] = read_char;
-        }
-        else{
-            count += 3;
-            count %= 8;
-            if(count < 3){
-                ar[buffer_index] = ar[buffer_index] | (read_char<<(8-(3-count)));
-                buffer_index++;
-                ar[buffer_index] = ar[buffer_index] | (read_char>>(3-count));
-            }
-            else{
-                ar[buffer_index] = ar[buffer_index] | (read_char<<(count-3));
-            }       
-            
-        }
-    }
+	for(i=0;i<length;i++){
+		if(read_seq[i] == 0) {
+			read_char = 0;
+		}   
+		else if(read_seq[i] == 1){
+			read_char = 1;
+		} 
+		else if(read_seq[i] == 2){
+			read_char = 2;
+		} 
+		else if(read_seq[i] == 3){
+			read_char = 3;
+		}
+		else{ 
+			read_char = 4;
+		}
+		if(count == 0){
+			count += 3;
+			ar[buffer_index] = read_char;
+		}
+		else{
+			count += 3;
+			count %= 8;
+			if(count < 3){
+				ar[buffer_index] = ar[buffer_index] | (read_char<<(8-(3-count)));
+				buffer_index++;
+				ar[buffer_index] = ar[buffer_index] | (read_char>>(3-count));
+			}
+			else{
+				ar[buffer_index] = ar[buffer_index] | (read_char<<(count-3));
+			}       
+			
+		}
+	}
 
 }
 
 
-    
+	
 
-    int encode_seed_data(uint64_t abs_chain_ref_beg, uint64_t abs_seed_ref_beg, uint64_t abs_chain_ref_end, uint32_t is_reverse, uint32_t seed_score,uint32_t seed_read_beg, uint32_t seed_read_end, uint32_t rel_seed_ref_beg, uint32_t rel_seed_ref_end, uint8_t *ar, int ar_index) {
-     
-        int ar_offset = 1;
-        //memset(ar, 0, ar_size*sizeof(uint32_t));
+	int encode_seed_data(uint64_t abs_chain_ref_beg, uint64_t abs_seed_ref_beg, uint64_t abs_chain_ref_end, uint32_t is_reverse, uint32_t seed_score,uint32_t seed_read_beg, uint32_t seed_read_end, uint32_t rel_seed_ref_beg, uint32_t rel_seed_ref_end, uint8_t *ar, int ar_index) {
+	 
+		int ar_offset = 1;
+		//memset(ar, 0, ar_size*sizeof(uint32_t));
 
-        if(bwa_verbose >= 18){
-            printf("[SEED]1,%lu,%lu,%lu,%u,%u,%u,%u,%u,%u,",abs_chain_ref_beg,abs_seed_ref_beg,abs_chain_ref_end,is_reverse,seed_score,seed_read_beg,seed_read_end,rel_seed_ref_beg,rel_seed_ref_end);
+		if(bwa_verbose >= 18){
+			printf("[SEED]1,%lu,%lu,%lu,%u,%u,%u,%u,%u,%u,",abs_chain_ref_beg,abs_seed_ref_beg,abs_chain_ref_end,is_reverse,seed_score,seed_read_beg,seed_read_end,rel_seed_ref_beg,rel_seed_ref_end);
 
-            if(seed_read_beg != 0) {
-                printf("1,1,");
-            }
-            else {
-                printf("0,0,");
-            }
-            if(seed_read_end != 101) {
-                printf("1,0,\n");
-            }
-            else {
-                printf("0,0,\n");
-            }
-            fflush(stdout);
-        }
+			if(seed_read_beg != 0) {
+				printf("1,1,");
+			}
+			else {
+				printf("0,0,");
+			}
+			if(seed_read_end != 101) {
+				printf("1,0,\n");
+			}
+			else {
+				printf("0,0,\n");
+			}
+			fflush(stdout);
+		}
 
-        if(ar_index == 0){
-            ar[0] = 3;
-        }
-        else{
-            ar[0] = 1;
-        }
+		if(ar_index == 0){
+			ar[0] = 3;
+		}
+		else{
+			ar[0] = 1;
+		}
 
-        memcpy(&ar[ar_offset],&abs_chain_ref_beg,8);
-        ar_offset += 8;
+		memcpy(&ar[ar_offset],&abs_chain_ref_beg,8);
+		ar_offset += 8;
 
-        memcpy(&ar[ar_offset],&abs_seed_ref_beg,8);
-        ar_offset += 8;
+		memcpy(&ar[ar_offset],&abs_seed_ref_beg,8);
+		ar_offset += 8;
 
-        memcpy(&ar[ar_offset],&abs_chain_ref_end,8);
-        ar_offset += 8;
+		memcpy(&ar[ar_offset],&abs_chain_ref_end,8);
+		ar_offset += 8;
 
-        ar[ar_offset] = is_reverse;
-        ar_offset++;
+		ar[ar_offset] = is_reverse;
+		ar_offset++;
 
-        ar[ar_offset] = (uint8_t)(seed_score & 0xFF);
-        ar_offset++;
-        
-        ar[ar_offset] = (uint8_t)(seed_read_beg & 0xFF);
-        ar_offset++;
+		ar[ar_offset] = (uint8_t)(seed_score & 0xFF);
+		ar_offset++;
+		
+		ar[ar_offset] = (uint8_t)(seed_read_beg & 0xFF);
+		ar_offset++;
 
-        ar[ar_offset] = (uint8_t)(seed_read_end & 0xFF);
-        ar_offset++;
+		ar[ar_offset] = (uint8_t)(seed_read_end & 0xFF);
+		ar_offset++;
 
-        ar[ar_offset] = (uint8_t)(rel_seed_ref_beg & 0xFF);
-        ar_offset++;
+		ar[ar_offset] = (uint8_t)(rel_seed_ref_beg & 0xFF);
+		ar_offset++;
 
-        ar[ar_offset] = (uint8_t)(rel_seed_ref_end & 0xFF);
-        ar_offset++;
-
-
-        uint8_t ext_int= 0;
+		ar[ar_offset] = (uint8_t)(rel_seed_ref_end & 0xFF);
+		ar_offset++;
 
 
-        if(seed_read_end != 101) {
-            ext_int = 1;
-            //push_to_lsb(ar+3,ar_size-3,0x0,1);
-            //push_to_lsb(ar+3,ar_size-3,0x1,1);
-        }
-        else {
-            //push_to_lsb(ar+3,ar_size-3,0x0,1);
-            //push_to_lsb(ar+3,ar_size-3,0x0,1);
-        }
-        ext_int = (ext_int << 2);
+		uint8_t ext_int= 0;
 
-        if(seed_read_beg != 0) {
-            ext_int = (ext_int | 3);
-            //push_to_lsb(ar+3,ar_size-3,0x1,1);
-            //push_to_lsb(ar+3,ar_size-3,0x1,1);
-        }
-        else {
-            //push_to_lsb(ar+3,ar_size-3,0x0,1);
-            //push_to_lsb(ar+3,ar_size-3,0x0,1);
-        }
 
-        ar[ar_offset] = ext_int;
-        ar_offset++;
-        
-        if(ar_index == 0) {
-            return 256;
-        } 
-        else {
-            return 0;
-        }
+		if(seed_read_end != 101) {
+			ext_int = 1;
+			//push_to_lsb(ar+3,ar_size-3,0x0,1);
+			//push_to_lsb(ar+3,ar_size-3,0x1,1);
+		}
+		else {
+			//push_to_lsb(ar+3,ar_size-3,0x0,1);
+			//push_to_lsb(ar+3,ar_size-3,0x0,1);
+		}
+		ext_int = (ext_int << 2);
 
-    }
+		if(seed_read_beg != 0) {
+			ext_int = (ext_int | 3);
+			//push_to_lsb(ar+3,ar_size-3,0x1,1);
+			//push_to_lsb(ar+3,ar_size-3,0x1,1);
+		}
+		else {
+			//push_to_lsb(ar+3,ar_size-3,0x0,1);
+			//push_to_lsb(ar+3,ar_size-3,0x0,1);
+		}
+
+		ar[ar_offset] = ext_int;
+		ar_offset++;
+		
+		if(ar_index == 0) {
+			return 256;
+		} 
+		else {
+			return 0;
+		}
+
+	}
 
 
 
@@ -993,8 +993,8 @@ void fetch_rmaxs(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, 
 
 
 	if (c->n == 0) return;
-        
-             
+		
+			 
 	// get the max possible span
 	rmax[0] = l_pac<<1; rmax[1] = 0;
 	for (i = 0; i < c->n; ++i) {
@@ -1014,192 +1014,192 @@ void fetch_rmaxs(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, 
 		if (c->seeds[0].rbeg < l_pac) rmax[1] = l_pac; // this works because all seeds are guaranteed to be on the same strand
 		else rmax[0] = l_pac;
 	}
-        if (bwa_verbose >= 10) {
-                printf("*** FPGA : rmax[0] :%ld, rmax[1]: %ld   \n",rmax[0],rmax[1]);
-        }       
+		if (bwa_verbose >= 10) {
+				printf("*** FPGA : rmax[0] :%ld, rmax[1]: %ld   \n",rmax[0],rmax[1]);
+		}       
 
-        *rmax0 = rmax[0];
-        *rmax1 = rmax[1];
+		*rmax0 = rmax[0];
+		*rmax1 = rmax[1];
 }
 
 
 
 /*
-    Pack 8 byte encoded string (size of len) to 3 byte string (8 chars)
+	Pack 8 byte encoded string (size of len) to 3 byte string (8 chars)
 */
 void f_8to3(const char *a, int len, uint8_t *b)
 {
-    int i, j;
-    uint32_t *p = (uint32_t*)b;
+	int i, j;
+	uint32_t *p = (uint32_t*)b;
 
-    for (i = 0; i < len; i += 8)
-    {
-        int offset = 0;
-        *p = 0;
-        for (j = 0; j < 8; j++)
-        {
-            *p |= (uint32_t) a[i+j] << offset;
-            offset += 3;
-        }
-        //printf("%d: %lo\n", i, *p);
-        p = (uint32_t *)((char*)p + 3);
+	for (i = 0; i < len; i += 8)
+	{
+		int offset = 0;
+		*p = 0;
+		for (j = 0; j < 8; j++)
+		{
+			*p |= (uint32_t) a[i+j] << offset;
+			offset += 3;
+		}
+		//printf("%d: %lo\n", i, *p);
+		p = (uint32_t *)((char*)p + 3);
 
-    }
+	}
 
 }
 
 void f_3to8(const char *a, int len, char *b)
 {
-    int i, j;
-    const uint32_t *p = (const uint32_t*)a;
-    
-    for (i = 0; i < len; i += 8)
-    {
-        int offset = 0;
-        for (j = 0; j < 8; j++)
-        {
-            b[i+j] = (*p & (0x7 << offset)) >> (offset);
-            offset += 3;
-        }
-        p = (const uint32_t *)((const char*)p + 3);
-    }
+	int i, j;
+	const uint32_t *p = (const uint32_t*)a;
+	
+	for (i = 0; i < len; i += 8)
+	{
+		int offset = 0;
+		for (j = 0; j < 8; j++)
+		{
+			b[i+j] = (*p & (0x7 << offset)) >> (offset);
+			offset += 3;
+		}
+		p = (const uint32_t *)((const char*)p + 3);
+	}
 }
 
 struct SeedExPackageGen
 {
-    SeedExPackageGen(): has_next(false) {}
+	SeedExPackageGen(): has_next(false) {}
 
-    void * new_input (LineParams params, char * query, char * target, union SeedExLine* buf)
-    {
-        char payload_buf[72];
-        buf->ty1.preamble = PACKET_START;
-        buf->ty1.params = params;
-        query_ptr = query;
-        target_ptr = target;
-        padding = params.tlen - params.qlen;
+	void * new_input (LineParams params, char * query, char * target, union SeedExLine* buf)
+	{
+		char payload_buf[72];
+		buf->ty1.preamble = PACKET_START;
+		buf->ty1.params = params;
+		query_ptr = query;
+		target_ptr = target;
+		padding = params.tlen - params.qlen;
 		qlen = params.qlen;
 		tlen = params.tlen;
 
-        assert(padding >= 0);
+		assert(padding >= 0);
 
-        // Query
-        // memset(buf->ty1.payload1, 0, 27);
-        if (params.qlen + padding < 72) /* |query------|padding---|nul---| */
-        {
-            memcpy(payload_buf, query, params.qlen);
-            memset(payload_buf + params.qlen, C_PADDING, padding);
-            memset(payload_buf + params.qlen + padding, C_NULL, 72 - params.qlen - padding);
-            query_ptr += params.qlen;
-            padding = 0;
-            has_next = false;
-        }
-        else if (params.qlen < 72) /* |query------|padding---| */
-        {
-            memcpy(payload_buf, query, params.qlen);
-            memset(payload_buf + params.qlen, C_PADDING, 72 - params.qlen);
-            query_ptr += params.qlen;
-            padding -= 72 - params.qlen;
-            has_next = true;
-        }
-        else /* |query-------------------| */
-        {
-            memcpy(payload_buf, query, 72);
-            query_ptr += 72;
-            has_next = true;
-        }
+		// Query
+		// memset(buf->ty1.payload1, 0, 27);
+		if (params.qlen + padding < 72) /* |query------|padding---|nul---| */
+		{
+			memcpy(payload_buf, query, params.qlen);
+			memset(payload_buf + params.qlen, C_PADDING, padding);
+			memset(payload_buf + params.qlen + padding, C_NULL, 72 - params.qlen - padding);
+			query_ptr += params.qlen;
+			padding = 0;
+			has_next = false;
+		}
+		else if (params.qlen < 72) /* |query------|padding---| */
+		{
+			memcpy(payload_buf, query, params.qlen);
+			memset(payload_buf + params.qlen, C_PADDING, 72 - params.qlen);
+			query_ptr += params.qlen;
+			padding -= 72 - params.qlen;
+			has_next = true;
+		}
+		else /* |query-------------------| */
+		{
+			memcpy(payload_buf, query, 72);
+			query_ptr += 72;
+			has_next = true;
+		}
 
-        // printf("Query:\t"); for (int i = 0; i < 72; ++i) printf("%d", payload_buf[i]); putchar('\n');
-        f_8to3(payload_buf, 72, buf->ty1.payload1);
+		// printf("Query:\t"); for (int i = 0; i < 72; ++i) printf("%d", payload_buf[i]); putchar('\n');
+		f_8to3(payload_buf, 72, buf->ty1.payload1);
 		qlen -= query_ptr - query;
 
-        // Target
-        // memset(buf->ty1.payload2, 0, 27);
-        if (params.tlen < 72) /* |target------|nul---| */
-        {
-            memcpy(payload_buf, target, params.tlen);
-            memset(payload_buf + params.tlen, C_NULL, 72 - params.tlen);
-            target_ptr += params.tlen;
-        }
-        else /* |target-------------------|| */
-        {
-            memcpy(payload_buf, target, 72);
-            target_ptr += 72;
-        }
-        // printf("Target:\t"); for (int i = 0; i < 72; ++i) printf("%d", payload_buf[i]); putchar('\n');
-        f_8to3(payload_buf, 72, buf->ty1.payload2);
+		// Target
+		// memset(buf->ty1.payload2, 0, 27);
+		if (params.tlen < 72) /* |target------|nul---| */
+		{
+			memcpy(payload_buf, target, params.tlen);
+			memset(payload_buf + params.tlen, C_NULL, 72 - params.tlen);
+			target_ptr += params.tlen;
+		}
+		else /* |target-------------------|| */
+		{
+			memcpy(payload_buf, target, 72);
+			target_ptr += 72;
+		}
+		// printf("Target:\t"); for (int i = 0; i < 72; ++i) printf("%d", payload_buf[i]); putchar('\n');
+		f_8to3(payload_buf, 72, buf->ty1.payload2);
 		tlen -= target_ptr - target;
 
 		if (!has_next) {
-        	buf->ty1.preamble = PACKET_END;
+			buf->ty1.preamble = PACKET_END;
 		}
-    }
+	}
 
-    void * next(union SeedExLine* buf)
-    {
-        if (!has_next) return nullptr;
+	void * next(union SeedExLine* buf)
+	{
+		if (!has_next) return nullptr;
 
-        char payload_buf[88];
+		char payload_buf[88];
 		char * orig_q = query_ptr, * orig_t = target_ptr;
-        buf->ty0.preamble = PACKET_MIDDLE;
-        // memset(buf->ty0.payload, 0xffff, 63);
+		buf->ty0.preamble = PACKET_MIDDLE;
+		// memset(buf->ty0.payload, 0xffff, 63);
 
-        // Query
-        if (qlen + padding < 84) /* |query------|padding---|nul---| */
-        {
-            memcpy(payload_buf, query_ptr, qlen);
-            memset(payload_buf + qlen, C_PADDING, padding);
-            memset(payload_buf + qlen + padding, C_NULL, 84 - qlen - padding);
-            query_ptr += qlen;
-            padding = 0;
-            has_next = false;
-        }
-        else if (qlen < 84) /* |query------|padding---| */
-        {
-            memcpy(payload_buf, query_ptr, qlen);
-            memset(payload_buf + qlen, C_PADDING, 84 - qlen);
-            query_ptr += qlen;
-            padding -= 84 - qlen;
-            assert(padding >= 0);
-            has_next = true;
-        }
-        else /* |query-------------------| */
-        {
-            memcpy(payload_buf, query_ptr, 84);
-            query_ptr += 84;
-            has_next = true;
-        }
-        // printf("Query(o):\t"); for (int i = 0; i < 84; ++i) printf("%d", payload_buf[i]); putchar('\n');
-        // printf("Query(w):\t    "); for (int i = 0; i < 80; ++i) printf("%d", payload_buf[i]); putchar('\n');
-        f_8to3(payload_buf, 80, buf->ty0.payload);
+		// Query
+		if (qlen + padding < 84) /* |query------|padding---|nul---| */
+		{
+			memcpy(payload_buf, query_ptr, qlen);
+			memset(payload_buf + qlen, C_PADDING, padding);
+			memset(payload_buf + qlen + padding, C_NULL, 84 - qlen - padding);
+			query_ptr += qlen;
+			padding = 0;
+			has_next = false;
+		}
+		else if (qlen < 84) /* |query------|padding---| */
+		{
+			memcpy(payload_buf, query_ptr, qlen);
+			memset(payload_buf + qlen, C_PADDING, 84 - qlen);
+			query_ptr += qlen;
+			padding -= 84 - qlen;
+			assert(padding >= 0);
+			has_next = true;
+		}
+		else /* |query-------------------| */
+		{
+			memcpy(payload_buf, query_ptr, 84);
+			query_ptr += 84;
+			has_next = true;
+		}
+		// printf("Query(o):\t"); for (int i = 0; i < 84; ++i) printf("%d", payload_buf[i]); putchar('\n');
+		// printf("Query(w):\t    "); for (int i = 0; i < 80; ++i) printf("%d", payload_buf[i]); putchar('\n');
+		f_8to3(payload_buf, 80, buf->ty0.payload);
 		qlen -= query_ptr - orig_q;
 
-        // Target
-        memcpy(payload_buf, payload_buf + 80, 4);
-        char * buf_target_ptr = &payload_buf[4];
-        if (tlen < 84) /* |target------|nul---| */
-        {
-            memcpy(buf_target_ptr, target_ptr, tlen);
-            memset(buf_target_ptr + tlen, C_NULL, 84 - tlen);
-            target_ptr += tlen;
-        }
-        else /* |target-------------------|| */
-        {
-            memcpy(buf_target_ptr, target_ptr, 84);
-            target_ptr += 84;
-        }
-        // printf("Target(w):\t"); for (int i = 0; i < 88; ++i) printf("%d", payload_buf[i]); putchar('\n');
-        f_8to3(payload_buf, 88, &buf->ty0.payload[30]);
+		// Target
+		memcpy(payload_buf, payload_buf + 80, 4);
+		char * buf_target_ptr = &payload_buf[4];
+		if (tlen < 84) /* |target------|nul---| */
+		{
+			memcpy(buf_target_ptr, target_ptr, tlen);
+			memset(buf_target_ptr + tlen, C_NULL, 84 - tlen);
+			target_ptr += tlen;
+		}
+		else /* |target-------------------|| */
+		{
+			memcpy(buf_target_ptr, target_ptr, 84);
+			target_ptr += 84;
+		}
+		// printf("Target(w):\t"); for (int i = 0; i < 88; ++i) printf("%d", payload_buf[i]); putchar('\n');
+		f_8to3(payload_buf, 88, &buf->ty0.payload[30]);
 		tlen -= target_ptr - orig_t;
 
 		if (!has_next) {
-        	buf->ty1.preamble = PACKET_END;
+			buf->ty1.preamble = PACKET_END;
 		}
-    }
+	}
 
-    char * query_ptr;
-    char * target_ptr;
-    int padding;
-    bool has_next;
+	char * query_ptr;
+	char * target_ptr;
+	int padding;
+	bool has_next;
 	int qlen, tlen;
 };
 
@@ -1214,22 +1214,22 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 	SeedExPackageGen gen;
 
 	if (c->n == 0) return;
-        // FPGA : Write read data into write_buffer
-        if (bwa_verbose >= 10) {
-                int j;
-                printf("*** FPGA : Seeing Read Query:   "); for (j = 0; j < l_query; ++j) putchar("ACGTN"[(int)query[j]]); putchar('\n');
-        }
+		// FPGA : Write read data into write_buffer
+		if (bwa_verbose >= 10) {
+				int j;
+				printf("*** FPGA : Seeing Read Query:   "); for (j = 0; j < l_query; ++j) putchar("ACGTN"[(int)query[j]]); putchar('\n');
+		}
 
-        rmax[0] = rmax0;
-        rmax[1] = rmax1;
+		rmax[0] = rmax0;
+		rmax[1] = rmax1;
 
 	// retrieve the reference sequence
 	rseq = bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
-    // if(bwa_verbose >= 15){
+	// if(bwa_verbose >= 15){
 	//     rseq = bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
-    // }
-    //
-    //int64_t k3 = 0;
+	// }
+	//
+	//int64_t k3 = 0;
 	//assert(c->rid == rid);
 
 	// srt = malloc(c->n * 8);
@@ -1260,7 +1260,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 		else{
 			// uint32_t is_reverse = (s->rbeg >= (l_pac)) ? 1 : 0; 
 
-            int seq_id = write_buffer_entry1.size();
+			int seq_id = write_buffer_entry1.size();
 			a = kv_pushp(mem_alnreg_t, *av);
 			memset(a, 0, sizeof(mem_alnreg_t));
 			a->w = aw[0] = aw[1] = opt->w;
@@ -1292,7 +1292,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 				}
 				// ksw_extend2(s->qbeg, qs, tmp, rs, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[0], opt->pen_clip5, opt->zdrop, s->len * opt->a, &qle, &tle, &gtle, &gscore, &max_off[0]);
 				// if (bwa_verbose >= 4) { printf("*** Left extension: prev_score=%d; score=%d; bandwidth=%d; max_off_diagonal_dist=%d\n", prev, a->score, aw[0], max_off[0]); fflush(stdout); }
-                fpga_result->fpga_entry_present = 1;
+				fpga_result->fpga_entry_present = 1;
 				free(qs); free(rs);
 			} else {
 				a->score = a->truesc = s->len * opt->a, a->qb = 0, a->rb = s->rbeg;
@@ -1315,31 +1315,31 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 				}
 				//ksw_extend2(l_query - qe, query + qe, rmax[1] - rmax[0] - re, rseq + re, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[1], opt->pen_clip3, opt->zdrop, sc0, &qle, &tle, &gtle, &gscore, &max_off[1]);
 				// if (bwa_verbose >= 4) { printf("*** Right extension: prev_score=%d; score=%d; bandwidth=%d; max_off_diagonal_dist=%d\n", prev, a->score, aw[1], max_off[1]); fflush(stdout); }
-                fpga_result->fpga_entry_present = 1;
+				fpga_result->fpga_entry_present = 1;
 			} else {
 				a->qe = l_query, a->re = s->rbeg + s->len;
 				write_buffer_entry2.push_back(nullptr);
 			}
 
-            extension_meta.back().seed_id = k;
-            extension_meta.push_back(extension_meta.back());
+			extension_meta.back().seed_id = k;
+			extension_meta.push_back(extension_meta.back());
 
 			a->seedlen0 = s->len;
 			a->frac_rep = c->frac_rep;
 
-            if (bwa_verbose >= 4) printf("*** Added alignment region: [%d,%d) <=> [%ld,%ld); score=%d; {left,right}_bandwidth={%d,%d}\n", a->qb, a->qe, (long)a->rb, (long)a->re, a->score, aw[0], aw[1]);
+			if (bwa_verbose >= 4) printf("*** Added alignment region: [%d,%d) <=> [%ld,%ld); score=%d; {left,right}_bandwidth={%d,%d}\n", a->qb, a->qe, (long)a->rb, (long)a->re, a->score, aw[0], aw[1]);
 
 			total_seeds++;
 		}
 
 	}
-    free(rseq);
+	free(rseq);
 }
 
 
 void postprocess_alnreg (const mem_opt_t *opt, int l_query, const mem_chain_t *c, mem_alnreg_v *av0, mem_alnreg_v *av)
 {
-    int i, k;
+	int i, k;
 
 	uint64_t *srt;
 	srt = malloc(c->n * 8);
@@ -1368,9 +1368,9 @@ void postprocess_alnreg (const mem_opt_t *opt, int l_query, const mem_chain_t *c
 			w = max_gap < p->w? max_gap : p->w;
 			if (qd - rd < w && rd - qd < w) break;
 		}
-        if(bwa_verbose >= 18){
+		if(bwa_verbose >= 18){
 				printf("(FPGA) i = %d,k = %d, av_size = %zu\n",i,k,av->n);
-        }
+		}
 		if (i < av->n) { // the seed is (almost) contained in an existing alignment; further testing is needed to confirm it is not leading to a different aln
 			if (bwa_verbose >= 4)
 				printf("** Seed(%d) [%ld;%ld,%ld] is almost contained in an existing alignment [%d,%d) <=> [%ld,%ld)\n",
@@ -1392,78 +1392,78 @@ void postprocess_alnreg (const mem_opt_t *opt, int l_query, const mem_chain_t *c
 		}
 
 		a = kv_pushp(mem_alnreg_t, *av);
-        memcpy(a, &av0->a[(uint32_t)srt[k]], sizeof(mem_alnreg_t));
-    }
+		memcpy(a, &av0->a[(uint32_t)srt[k]], sizeof(mem_alnreg_t));
+	}
 
-    free(srt);
+	free(srt);
 }
 
 
 void fpga_func_model(const mem_opt_t *opt, std::vector<union SeedExLine>& load_buf, std::vector<union SeedExLine*>& idx, std::vector<union SeedExLine>& results)
 {
-    int i,j;
-    char buf[168];
-    for (auto p : idx)
-    {
+	int i,j;
+	char buf[168];
+	for (auto p : idx)
+	{
 		if (!p) continue;
-        int qlen = p->ty1.params.qlen;
-        int tlen = p->ty1.params.tlen;
-        int w = p->ty1.params.w;
-        int init_score = p->ty1.params.init_score;
-        int seq_id = p->ty1.params.seq_id;
-        char *query = calloc(qlen, sizeof(char));
-        char *target = calloc(tlen, sizeof(char));
-        char *query_ptr = query;
-        char *target_ptr = target;
+		int qlen = p->ty1.params.qlen;
+		int tlen = p->ty1.params.tlen;
+		int w = p->ty1.params.w;
+		int init_score = p->ty1.params.init_score;
+		int seq_id = p->ty1.params.seq_id;
+		char *query = calloc(qlen, sizeof(char));
+		char *target = calloc(tlen, sizeof(char));
+		char *query_ptr = query;
+		char *target_ptr = target;
 		assert(p->ty1.preamble == PACKET_START || p->ty1.preamble == PACKET_END);
 
-        // decode first line
-        f_3to8(p->ty1.payload1, 72, buf);
-        memcpy(query, buf, MIN(72, qlen));
-        query_ptr += MIN(72, qlen);
+		// decode first line
+		f_3to8(p->ty1.payload1, 72, buf);
+		memcpy(query, buf, MIN(72, qlen));
+		query_ptr += MIN(72, qlen);
 
-        f_3to8(p->ty1.payload2, 72, buf);
-        memcpy(target, buf, MIN(72, tlen));
-        target_ptr += MIN(72, tlen);
+		f_3to8(p->ty1.payload2, 72, buf);
+		memcpy(target, buf, MIN(72, tlen));
+		target_ptr += MIN(72, tlen);
 
-        union SeedExLine *line = (union SeedExLine *)p + 1;
-        while (target_ptr - target < tlen)
-        {
-            f_3to8(line->ty0.payload, 168, buf);
-            if (qlen > query_ptr - query) {
-                memcpy(query_ptr, buf, MIN(84, qlen - (query_ptr - query)));
-                query_ptr += MIN(84, qlen - (query_ptr - query));
-            }
-            memcpy(target_ptr, &buf[84], MIN(84, tlen - (target_ptr - target)));
-            target_ptr += MIN(84, tlen - (target_ptr - target));
+		union SeedExLine *line = (union SeedExLine *)p + 1;
+		while (target_ptr - target < tlen)
+		{
+			f_3to8(line->ty0.payload, 168, buf);
+			if (qlen > query_ptr - query) {
+				memcpy(query_ptr, buf, MIN(84, qlen - (query_ptr - query)));
+				query_ptr += MIN(84, qlen - (query_ptr - query));
+			}
+			memcpy(target_ptr, &buf[84], MIN(84, tlen - (target_ptr - target)));
+			target_ptr += MIN(84, tlen - (target_ptr - target));
 
-            line++;
-        }
+			line++;
+		}
 		assert((line-1)->ty0.preamble == PACKET_END);
 
-        int lscore, gscore, tle, qle, gtle, max_off;
-	    lscore = ksw_extend2(qlen, query, tlen, target, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, w, opt->pen_clip5, opt->zdrop, init_score, &qle, &tle, &gtle, &gscore, &max_off);
+		int lscore, gscore, tle, qle, gtle, max_off;
+		lscore = ksw_extend2(qlen, query, tlen, target, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, w, opt->pen_clip5, opt->zdrop, init_score, &qle, &tle, &gtle, &gscore, &max_off);
 
-        struct ResultLine *rl;
-        if (results.size() == 0 || results.back().ty_r.preamble[0] >= 5)
-        {
-            results.push_back({0});
-            rl = &results.back().ty_r;
-        }
-        rl = &results.back().ty_r;
+		struct ResultLine *rl;
+		if (results.size() == 0 || results.back().ty_r.preamble[0] >= 5)
+		{
+			results.push_back({0});
+			rl = &results.back().ty_r;
+		}
+		rl = &results.back().ty_r;
 
-        struct ResultEntry &re = rl->results[rl->preamble[0]++];
-        re.qle = qle;
-        re.gscore = gscore;
-        re.gtle = gtle;
-        re.lscore = lscore;
-        re.seq_id = seq_id;
-        re.tle = tle;
+		struct ResultEntry &re = rl->results[rl->preamble[0]++];
+		re.qle = qle;
+		re.gscore = gscore;
+		re.gtle = gtle;
+		re.lscore = lscore;
+		re.seq_id = seq_id;
+		re.tle = tle;
 		free(query);
 		free(target);
 		// test exception
 		// re.exception = 1;
-    }
+	}
 }
 
 void mem_chain2aln_cpu(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av, int64_t rmax0, int64_t rmax1)
@@ -1475,15 +1475,15 @@ void mem_chain2aln_cpu(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t 
 	uint64_t *srt;
 
 	if (c->n == 0) return;
-        // FPGA : Write read data into write_buffer
-        if (bwa_verbose >= 10) {
-                int j;
-                printf("*** FPGA : Seeing Read Query:   "); for (j = 0; j < l_query; ++j) putchar("ACGTN"[(int)query[j]]); putchar('\n');
-        }
+		// FPGA : Write read data into write_buffer
+		if (bwa_verbose >= 10) {
+				int j;
+				printf("*** FPGA : Seeing Read Query:   "); for (j = 0; j < l_query; ++j) putchar("ACGTN"[(int)query[j]]); putchar('\n');
+		}
 
 
-        rmax[0] = rmax0;
-        rmax[1] = rmax1;
+		rmax[0] = rmax0;
+		rmax[1] = rmax1;
 
 	// retrieve the reference sequence
 	rseq = bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
@@ -1502,11 +1502,11 @@ void mem_chain2aln_cpu(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t 
 		a->rid = c->rid;
 
 		if (bwa_verbose >= 4) err_printf("** ---> Extending from seed(%d) [%ld;%ld,%ld] @ %s <---\n", k, (long)s->len, (long)s->qbeg, (long)s->rbeg, bns->anns[c->rid].name);
-                if(bwa_verbose >= 10) {
-                    printf("FPGA Qbeg : %d\n",s->qbeg);
-                    printf("FPGA Qend : %d\n",s->qbeg + s->len);
-                    printf("FPGA Seed beg : %ld\n",s->rbeg);
-                }
+				if(bwa_verbose >= 10) {
+					printf("FPGA Qbeg : %d\n",s->qbeg);
+					printf("FPGA Qend : %d\n",s->qbeg + s->len);
+					printf("FPGA Seed beg : %ld\n",s->rbeg);
+				}
 
 		if (s->qbeg) { // left extension
 			uint8_t *rs, *qs;
@@ -1593,13 +1593,13 @@ void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac
 
 
 	if (c->n == 0) return;
-        // FPGA : Write read data into write_buffer
-        if (bwa_verbose >= 10) {
-                int j;
-                printf("*** FPGA : Seeing Read Query:   "); for (j = 0; j < l_query; ++j) putchar("ACGTN"[(int)query[j]]); putchar('\n');
-        }
-        
-             
+		// FPGA : Write read data into write_buffer
+		if (bwa_verbose >= 10) {
+				int j;
+				printf("*** FPGA : Seeing Read Query:   "); for (j = 0; j < l_query; ++j) putchar("ACGTN"[(int)query[j]]); putchar('\n');
+		}
+		
+			 
 	// get the max possible span
 	/*rmax[0] = l_pac<<1; rmax[1] = 0;
 	for (i = 0; i < c->n; ++i) {
@@ -1619,13 +1619,13 @@ void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac
 		if (c->seeds[0].rbeg < l_pac) rmax[1] = l_pac; // this works because all seeds are guaranteed to be on the same strand
 		else rmax[0] = l_pac;
 	}
-        if (bwa_verbose >= 10) {
-                int j;
-                printf("*** FPGA : rmax[0] :%llu, rmax[1]: %llu   \n",rmax[0],rmax[1]);
-        }*/
-        
-        rmax[0] = rmax0;
-        rmax[1] = rmax1;
+		if (bwa_verbose >= 10) {
+				int j;
+				printf("*** FPGA : rmax[0] :%llu, rmax[1]: %llu   \n",rmax[0],rmax[1]);
+		}*/
+		
+		rmax[0] = rmax0;
+		rmax[1] = rmax1;
 
 	// retrieve the reference sequence
 	rseq = bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
@@ -1657,9 +1657,9 @@ void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac
 			w = max_gap < p->w? max_gap : p->w;
 			if (qd - rd < w && rd - qd < w) break;
 		}
-        if(bwa_verbose >= 18){
+		if(bwa_verbose >= 18){
 				printf("(FPGA) i = %d,k = %d, av_size = %zu\n",i,k,av->n);
-        }
+		}
 		if (i < av->n) { // the seed is (almost) contained in an existing alignment; further testing is needed to confirm it is not leading to a different aln
 			if (bwa_verbose >= 4)
 				printf("** Seed(%d) [%ld;%ld,%ld] is almost contained in an existing alignment [%d,%d) <=> [%ld,%ld)\n",
@@ -1687,14 +1687,14 @@ void mem_chain2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac
 		a->rid = c->rid;
 
 		if (bwa_verbose >= 4) err_printf("** ---> Extending from seed(%d) [%ld;%ld,%ld] @ %s <---\n", k, (long)s->len, (long)s->qbeg, (long)s->rbeg, bns->anns[c->rid].name);
-                if(bwa_verbose >= 10) {
-                    printf("FPGA Qbeg : %d\n",s->qbeg);
-                    printf("FPGA Qend : %d\n",s->qbeg + s->len);
-                    printf("FPGA Seed beg : %ld\n",s->rbeg);
-                }
+				if(bwa_verbose >= 10) {
+					printf("FPGA Qbeg : %d\n",s->qbeg);
+					printf("FPGA Qend : %d\n",s->qbeg + s->len);
+					printf("FPGA Seed beg : %ld\n",s->rbeg);
+				}
 
 		if (s->qbeg) { // left extension
-                
+				
 
 
 			uint8_t *rs, *qs;
@@ -1811,9 +1811,9 @@ static inline void add_cigar(const mem_opt_t *opt, mem_aln_t *p, kstring_t *str,
 	int i, l_name;
 	mem_aln_t ptmp = list[which], *p = &ptmp, mtmp, *m = 0; // make a copy of the alignment to convert
 
-    s->abs_pos[which] = p->aln_abs_pos;
-    s->correction[which] = p->correction;
-    s->is_rev[which] = p->is_rev;
+	s->abs_pos[which] = p->aln_abs_pos;
+	s->correction[which] = p->correction;
+	s->is_rev[which] = p->is_rev;
 }*/
 
 void mem_aln2sam(const mem_opt_t *opt, const bntseq_t *bns, kstring_t *str, bseq1_t *s, int n, const mem_aln_t *list, int which, const mem_aln_t *m_, int64_t *abs_pos)
@@ -1849,10 +1849,10 @@ void mem_aln2sam(const mem_opt_t *opt, const bntseq_t *bns, kstring_t *str, bseq
 	} else kputsn("*\t0\t0\t*", 7, str); // without coordinte
 	kputc('\t', str);
 
-    // put abs position in the sequence record
-    s->abs_pos = p->aln_abs_pos;
-    s->correction = p->correction;
-    s->is_rev = p->is_rev;
+	// put abs position in the sequence record
+	s->abs_pos = p->aln_abs_pos;
+	s->correction = p->correction;
+	s->is_rev = p->is_rev;
 
 
 	// print the mate position if applicable
@@ -2007,16 +2007,16 @@ void mem_reorder_primary5(int T, mem_alnreg_v *a)
 
 
 /*void create_bin_sam(bseq1_t * s){
-    int l_seq = s->l_seq;
-    int i = 0;
-    s->bin_sam = (uint8_t *) malloc(l_seq * sizeof(uint8_t));
-    memset(s->bin_sam,0,(l_seq * sizeof(uint8_t)));
-    for(i = 0;i<l_seq;i++){
-        if(s->seq[i] < 4){
-            s->bin_sam[i] = ((int)s->qual[i] - 33) << 2;
-            s->bin_sam[i] |= s->seq[i];
-        }
-    }
+	int l_seq = s->l_seq;
+	int i = 0;
+	s->bin_sam = (uint8_t *) malloc(l_seq * sizeof(uint8_t));
+	memset(s->bin_sam,0,(l_seq * sizeof(uint8_t)));
+	for(i = 0;i<l_seq;i++){
+		if(s->seq[i] < 4){
+			s->bin_sam[i] = ((int)s->qual[i] - 33) << 2;
+			s->bin_sam[i] |= s->seq[i];
+		}
+	}
 }*/
 
 
@@ -2024,14 +2024,14 @@ void mem_reorder_primary5(int T, mem_alnreg_v *a)
 void mem_reg2sam(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, bseq1_t *s, mem_alnreg_v *a, int extra_flag, const mem_aln_t *m)
 {
 	
-    extern char **mem_gen_alt(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, mem_alnreg_v *a, int l_query, const char *query);
+	extern char **mem_gen_alt(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, mem_alnreg_v *a, int l_query, const char *query);
 	kstring_t str;
 	kvec_t(mem_aln_t) aa;
 	int k, l;
 	char **XA = 0;
-    
+	
 
-    int64_t abs_pos = 0;
+	int64_t abs_pos = 0;
 	if (!(opt->flag & MEM_F_ALL))
 		XA = mem_gen_alt(opt, bns, pac, a, s->l_seq, s->seq);
 	kv_init(aa);
@@ -2057,25 +2057,25 @@ void mem_reg2sam(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, 
 
 
 	if (aa.n == 0) { // no alignments good enough; then write an unaligned record
-            mem_aln_t t;
-            t = mem_reg2aln(opt, bns, pac, s->l_seq, s->seq, 0);
-            t.flag |= extra_flag;
-            //mem_aln2bin_sam(opt, bns, s, 1, &t, 0, m);
-            mem_aln2sam(opt, bns, &str, s, 1, &t, 0, m, &abs_pos);
-            //s->abs_pos = abs_pos;
+			mem_aln_t t;
+			t = mem_reg2aln(opt, bns, pac, s->l_seq, s->seq, 0);
+			t.flag |= extra_flag;
+			//mem_aln2bin_sam(opt, bns, s, 1, &t, 0, m);
+			mem_aln2sam(opt, bns, &str, s, 1, &t, 0, m, &abs_pos);
+			//s->abs_pos = abs_pos;
 	} else {
-            for (k = 0; k < aa.n; ++k){
-                //mem_aln2bin_sam(opt, bns, s, aa.n, aa.a, k, m);
-                mem_aln2sam(opt, bns, &str, s, aa.n, aa.a, k, m, &abs_pos);
-            }
-            for (k = 0; k < aa.n; ++k) free(aa.a[k].cigar);
-            free(aa.a);
-            //s->abs_pos = abs_pos;
+			for (k = 0; k < aa.n; ++k){
+				//mem_aln2bin_sam(opt, bns, s, aa.n, aa.a, k, m);
+				mem_aln2sam(opt, bns, &str, s, aa.n, aa.a, k, m, &abs_pos);
+			}
+			for (k = 0; k < aa.n; ++k) free(aa.a[k].cigar);
+			free(aa.a);
+			//s->abs_pos = abs_pos;
 	}
 	s->sam = str.s;
 	if (XA) {
-            for (k = 0; k < a->n; ++k) free(XA[k]);
-            free(XA);
+			for (k = 0; k < a->n; ++k) free(XA[k]);
+			free(XA);
 	}
 }
 
@@ -2094,28 +2094,28 @@ void seeding(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const 
 	mem_flt_chained_seeds(opt, bns, pac, l_seq, (uint8_t*)seq, chn->n, chn->a);
 	if (bwa_verbose >= 4) mem_print_chain(bns, chn);
 
-    *chain = chn;
+	*chain = chn;
 
-    return;
+	return;
 }
 
 
 void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_seq, char *seq, mem_chain_v * chn, mem_alnreg_v_v * alnregs, fpga_data_out_t *data_out, std::vector<union SeedExLine>& write_buffer1, std::vector<union SeedExLine*>& write_buffer_entry_idx1, std::vector<union SeedExLine>& write_buffer2, std::vector<union SeedExLine*>& write_buffer_entry_idx2, std::vector<struct extension_meta_t>& extension_meta, int run_fpga){
 	
-    // mem_alnreg_v * regs = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
-    // memset(regs,0,sizeof(mem_alnreg_v));
+	// mem_alnreg_v * regs = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
+	// memset(regs,0,sizeof(mem_alnreg_v));
 	// kv_init(*alnregs);
 	mem_alnreg_v * regs = NULL;
 
-    int i = 0;
+	int i = 0;
 	for (i = 0; i < chn->n; ++i) {
 		mem_chain_t *p = &(chn->a[i]);
 		if (bwa_verbose >= 4) err_printf("* ---> Processing chain(%d) <---\n", i);
-        int64_t rmax0 = 0;
-        int64_t rmax1 = 0;
+		int64_t rmax0 = 0;
+		int64_t rmax1 = 0;
 
-        fetch_rmaxs(opt, bns,pac, l_seq, (uint8_t*) seq, p, regs, &rmax0, &rmax1);
-        if(run_fpga == 0){
+		fetch_rmaxs(opt, bns,pac, l_seq, (uint8_t*) seq, p, regs, &rmax0, &rmax1);
+		if(run_fpga == 0){
 			if (!regs) {
 				if (alnregs) {
 					for (int j = 0; j < alnregs->n; j++) free(alnregs->a[j].a);
@@ -2125,19 +2125,19 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
 				regs = kv_pushp(mem_alnreg_v, *alnregs);
 				memset(regs, 0, sizeof(mem_alnreg_v));
 			}
-            mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
-        }
+			mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
+		}
 		else {
 			regs = kv_pushp(mem_alnreg_v, *alnregs);
 			memset(regs, 0, sizeof(mem_alnreg_v));
 			if ((rmax1 - rmax0) > 250) {
-  	          	// Max allowed ref length
+  			  	// Max allowed ref length
 				mem_chain2aln_cpu(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
 			}
-  	      	else{
-  	 	        extension_meta.back().chain_id = i;
-  	 	        mem_chain2aln_to_fpga(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1, data_out, write_buffer1, write_buffer_entry_idx1, write_buffer2, write_buffer_entry_idx2, extension_meta);
-  	      	}
+  		  	else{
+  	 			extension_meta.back().chain_id = i;
+  	 			mem_chain2aln_to_fpga(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1, data_out, write_buffer1, write_buffer_entry_idx1, write_buffer2, write_buffer_entry_idx2, extension_meta);
+  		  	}
 		}
 		//free(chn->a[i].seeds);
 	}
@@ -2157,19 +2157,19 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
 	// 		p->is_alt = 1;
 	// }
 
-    // if(data_out->fpga_entry_present == 1){
-    //     if (bwa_verbose >= 10) {
-    //         printf("Writing entry num for read\n");
-    //     }
-    // }
-    // *alnreg = regs; 
-    return;
+	// if(data_out->fpga_entry_present == 1){
+	//     if (bwa_verbose >= 10) {
+	//         printf("Writing entry num for read\n");
+	//     }
+	// }
+	// *alnreg = regs; 
+	return;
 }
 
 mem_alnreg_v mem_align1_core(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_seq, char *seq, void *buf, fpga_data_out_t *data_out, uint8_t** write_buffer, size_t *write_buffer_size, uint32_t *write_buffer_index,uint32_t read_id)
 {
 
-        // Enter this method once for every read
+		// Enter this method once for every read
 	int i;
 	mem_chain_v chn;
 	mem_alnreg_v regs;
@@ -2186,17 +2186,17 @@ mem_alnreg_v mem_align1_core(const mem_opt_t *opt, const bwt_t *bwt, const bntse
 	for (i = 0; i < chn.n; ++i) {
 		mem_chain_t *p = &chn.a[i];
 		if (bwa_verbose >= 4) err_printf("* ---> Processing chain(%d) <---\n", i);
-                int64_t rmax0 = 0;
-                int64_t rmax1 = 0;
+				int64_t rmax0 = 0;
+				int64_t rmax1 = 0;
 
-                fetch_rmaxs(opt, bns,pac, l_seq, (uint8_t*) seq, p, &regs, &rmax0, &rmax1);
-                if((rmax1 - rmax0) > 0){
-                    // Max allowed ref length
-		            mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, &regs,rmax0,rmax1);
-                }
-                else{
-		            // mem_chain2aln_to_fpga(opt, bns, pac, l_seq, (uint8_t*)seq, p, &regs,rmax0,rmax1, data_out, write_buffer, write_buffer_size,write_buffer_index,&ar_index);
-                }
+				fetch_rmaxs(opt, bns,pac, l_seq, (uint8_t*) seq, p, &regs, &rmax0, &rmax1);
+				if((rmax1 - rmax0) > 0){
+					// Max allowed ref length
+					mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, &regs,rmax0,rmax1);
+				}
+				else{
+					// mem_chain2aln_to_fpga(opt, bns, pac, l_seq, (uint8_t*)seq, p, &regs,rmax0,rmax1, data_out, write_buffer, write_buffer_size,write_buffer_index,&ar_index);
+				}
 		free(chn.a[i].seeds);
 	}
 	free(chn.a);
@@ -2213,11 +2213,11 @@ mem_alnreg_v mem_align1_core(const mem_opt_t *opt, const bwt_t *bwt, const bntse
 		if (p->rid >= 0 && bns->anns[p->rid].is_alt)
 			p->is_alt = 1;
 	}
-        if(data_out->fpga_entry_present == 1){
-	    if (bwa_verbose >= 10) {
-                printf("Writing entry num for read\n");
-            }
-        }
+		if(data_out->fpga_entry_present == 1){
+		if (bwa_verbose >= 10) {
+				printf("Writing entry num for read\n");
+			}
+		}
 	return regs;
 }
 
@@ -2231,7 +2231,7 @@ mem_aln_t mem_reg2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *
 	memset(&a, 0, sizeof(mem_aln_t));
 	if (ar == 0 || ar->rb < 0 || ar->re < 0) { // generate an unmapped record
 		a.rid = -1; a.pos = -1; a.flag |= 0x4;
-        a.aln_abs_pos = bns->l_pac;
+		a.aln_abs_pos = bns->l_pac;
 		return a;
 	}
 	qb = ar->qb, qe = ar->qe;
@@ -2272,12 +2272,12 @@ mem_aln_t mem_reg2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *
 			memmove(a.cigar + a.n_cigar, a.cigar + a.n_cigar + 1, l_MD); // MD needs to be moved accordingly
 		}
 	}
-    int64_t inter_pos = pos;
+	int64_t inter_pos = pos;
 	if (qb != 0 || qe != l_query) { // add clipping to CIGAR
 		int clip5, clip3;
 		clip5 = is_rev? l_query - qe : qb;
 		clip3 = is_rev? qb : l_query - qe;
-        inter_pos -= clip5;
+		inter_pos -= clip5;
 		a.cigar = realloc(a.cigar, 4 * (a.n_cigar + 2) + l_MD);
 		if (clip5) {
 			memmove(a.cigar+1, a.cigar, a.n_cigar * 4 + l_MD); // make room for 5'-end clipping
@@ -2290,10 +2290,10 @@ mem_aln_t mem_reg2aln(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *
 		}
 	}
 
-    a.aln_abs_pos = inter_pos;             // Get abs position of aln for sorting
-    a.correction = pos - inter_pos;
+	a.aln_abs_pos = inter_pos;             // Get abs position of aln for sorting
+	a.correction = pos - inter_pos;
 	a.rid = bns_pos2rid(bns, pos);
-    //a.aln_abs_pos = pos;             // Get abs position of aln for sorting
+	//a.aln_abs_pos = pos;             // Get abs position of aln for sorting
 	//assert(a.rid == ar->rid);
 	a.pos = pos - bns->anns[a.rid].offset;
 	a.score = ar->score; a.sub = ar->sub > ar->csub? ar->sub : ar->csub;
@@ -2311,16 +2311,16 @@ void get_scores_left(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, 
 		return;
 	}
 
-    // mem_alnreg_t *a = kv_pushp(mem_alnreg_t, *in_a);
+	// mem_alnreg_t *a = kv_pushp(mem_alnreg_t, *in_a);
 	// memset(a, 0, sizeof(mem_alnreg_t));
-    mem_alnreg_t *a = &in_a->a[reg_id];
+	mem_alnreg_t *a = &in_a->a[reg_id];
 
 	const mem_seed_t *s = &c->seeds[(uint32_t)reg_id];
 
-    //in_fpga_result_entry->read_id = read_buffer[0] & mask; 
-    if(bwa_verbose >= 15){
-        printf("Read ID : %x\n",re->seq_id);
-    }
+	//in_fpga_result_entry->read_id = read_buffer[0] & mask; 
+	if(bwa_verbose >= 15){
+		printf("Read ID : %x\n",re->seq_id);
+	}
 
 	// store returned value
 	a->score = re->lscore;
@@ -2346,15 +2346,15 @@ void get_scores_right(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns,
 		return;
 	}
 
-    mem_alnreg_t *a = &in_a->a[reg_id];
+	mem_alnreg_t *a = &in_a->a[reg_id];
 
 	const mem_seed_t *s = &c->seeds[(uint32_t)reg_id];
 	int sc0 = a->score;
 
-    //in_fpga_result_entry->read_id = read_buffer[0] & mask; 
-    if(bwa_verbose >= 15){
-        printf("Read ID : %x\n",re->seq_id);
-    }
+	//in_fpga_result_entry->read_id = read_buffer[0] & mask; 
+	if(bwa_verbose >= 15){
+		printf("Read ID : %x\n",re->seq_id);
+	}
 
 	// store returned value
 	a->score = re->lscore;
@@ -2381,13 +2381,13 @@ void get_scores_right(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns,
 }
 
 void rerun_left_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, mem_chain_t *c, mem_alnreg_v *av, int reg_id){
-    mem_alnreg_t *a = &av->a[reg_id];
+	mem_alnreg_t *a = &av->a[reg_id];
 	const mem_seed_t *s = &c->seeds[(uint32_t)reg_id];
 	if (s->qbeg) { // left extension
 		// printf("@@@ Rerunning rerun left\n");
 		int i, rid, aw[2], max_off[2];
 		int64_t rmax[2], tmp;
-        fetch_rmaxs(opt, bns,pac, l_query, (uint8_t*) query, c, NULL, &rmax[0], &rmax[1]);
+		fetch_rmaxs(opt, bns,pac, l_query, (uint8_t*) query, c, NULL, &rmax[0], &rmax[1]);
 		uint8_t *rseq = 0;
 		rseq = bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
 		uint8_t *rs, *qs;
@@ -2422,13 +2422,13 @@ void rerun_left_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t
 }
 
 void rerun_right_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, mem_chain_t *c, mem_alnreg_v *av, int reg_id){
-    mem_alnreg_t *a = &av->a[reg_id];
+	mem_alnreg_t *a = &av->a[reg_id];
 	const mem_seed_t *s = &c->seeds[(uint32_t)reg_id];
 	if (s->qbeg + s->len != l_query) { // right extension
 		// printf("@@@ Rerunning rerun right\n");
 		int i, rid, aw[2], max_off[2];
 		int64_t rmax[2];
-        fetch_rmaxs(opt, bns,pac, l_query, (uint8_t*) query, c, NULL, &rmax[0], &rmax[1]);
+		fetch_rmaxs(opt, bns,pac, l_query, (uint8_t*) query, c, NULL, &rmax[0], &rmax[1]);
 		uint8_t *rseq = 0;
 		rseq = bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
 		int qle, tle, qe, re, gtle, gscore, sc0 = a->score;
@@ -2459,114 +2459,114 @@ void rerun_right_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_
 }
 
 void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, queue_t *qe,fpga_data_out_v * f1v, std::vector<struct extension_meta_t>& extension_meta, mem_alnreg_v_v *alnregs){
-    int i = 0;
-    for(i=0;i<total_lines;i++){
-        if(bwa_verbose >= 15){
-            int k1=0,i1=0;
-            for(k1 = 63;k1>=0;k1--) {
-                for(i1 = 8-4;i1>=0;i1 -= 4){
-                    printf("%x",read_buffer[i*64 + k1]>>i1 & 0xF);
-                }
+	int i = 0;
+	for(i=0;i<total_lines;i++){
+		if(bwa_verbose >= 15){
+			int k1=0,i1=0;
+			for(k1 = 63;k1>=0;k1--) {
+				for(i1 = 8-4;i1>=0;i1 -= 4){
+					printf("%x",read_buffer[i*64 + k1]>>i1 & 0xF);
+				}
 
-            }
-            printf("\n");
-        }
+			}
+			printf("\n");
+		}
 
-        struct ResultLine* results = ((struct ResultLine*) read_buffer) + i;
+		struct ResultLine* results = ((struct ResultLine*) read_buffer) + i;
 
-        // memcpy(&read_id,read_buffer + i*64 + 1,4);
-        // read_id = read_id - qe->starting_read_id;
+		// memcpy(&read_id,read_buffer + i*64 + 1,4);
+		// read_id = read_id - qe->starting_read_id;
 
-        for (int k = 0; k < results->preamble[0]; ++k) {
-            struct ResultEntry * re = &results->results[k];
-            uint32_t read_idx = extension_meta.at(re->seq_id).read_idx;
-            // uint32_t read_id = qe->seqs[read_idx]->read_id;
-            uint32_t chain_id = extension_meta.at(re->seq_id).chain_id;
-            uint32_t seed_id = extension_meta.at(re->seq_id).seed_id;
-            //TODO: Fix this if condition
-            if(read_idx < BATCH_SIZE){
-            //assert(read_id < BATCH_SIZE);
-                if(f1v->a[read_idx].fpga_entry_present == 1){
+		for (int k = 0; k < results->preamble[0]; ++k) {
+			struct ResultEntry * re = &results->results[k];
+			uint32_t read_idx = extension_meta.at(re->seq_id).read_idx;
+			// uint32_t read_id = qe->seqs[read_idx]->read_id;
+			uint32_t chain_id = extension_meta.at(re->seq_id).chain_id;
+			uint32_t seed_id = extension_meta.at(re->seq_id).seed_id;
+			//TODO: Fix this if condition
+			if(read_idx < BATCH_SIZE){
+			//assert(read_id < BATCH_SIZE);
+				if(f1v->a[read_idx].fpga_entry_present == 1){
 					bool need_rerun = false;
-                    if (f1v->read_right) {
-                        get_scores_right(w->opt, re, global_bns, qe->seqs[read_idx]->l_seq,&qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id, &need_rerun);
+					if (f1v->read_right) {
+						get_scores_right(w->opt, re, global_bns, qe->seqs[read_idx]->l_seq,&qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id, &need_rerun);
 						if (need_rerun) {
 							rerun_right_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, (const uint8_t *)qe->seqs[i]->seq, &qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id);
 						}
-                    } else {
-                        get_scores_left(w->opt, re, global_bns,&qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id, &need_rerun);
+					} else {
+						get_scores_left(w->opt, re, global_bns,&qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id, &need_rerun);
 						if (need_rerun) {
 							rerun_left_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, (const uint8_t *)qe->seqs[i]->seq, &qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id);
 						}
 
-                        // transfer score for sc0 in loadbuf2
-                        union SeedExLine * right_ext_entry;
-                        if (right_ext_entry = f1v->load_buffer_entry_idx2->at(re->seq_id)) {
-                            right_ext_entry->ty1.params.init_score = re->lscore;
-                        }
+						// transfer score for sc0 in loadbuf2
+						union SeedExLine * right_ext_entry;
+						if (right_ext_entry = f1v->load_buffer_entry_idx2->at(re->seq_id)) {
+							right_ext_entry->ty1.params.init_score = re->lscore;
+						}
 					}
-                        // get_scores(1read_buffer + (i*64), global_bns,w->regs[read_id]);
-    // void get_scores_right(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, int l_query, const mem_chain_t *c, mem_alnreg_v *in_a, uint16_t *reg_id){
-    //void get_scores_left(const mem_opt_t *opt, uint8_t *read_buffer,const bntseq_t *bns, const mem_chain_t *c, mem_alnreg_v *in_a, uint16_t *reg_id){
-                    //get_scores(read_buffer + (i*8),&w->regs[read_id]);
-                }
-            }
-        }
+						// get_scores(1read_buffer + (i*64), global_bns,w->regs[read_id]);
+	// void get_scores_right(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, int l_query, const mem_chain_t *c, mem_alnreg_v *in_a, uint16_t *reg_id){
+	//void get_scores_left(const mem_opt_t *opt, uint8_t *read_buffer,const bntseq_t *bns, const mem_chain_t *c, mem_alnreg_v *in_a, uint16_t *reg_id){
+					//get_scores(read_buffer + (i*8),&w->regs[read_id]);
+				}
+			}
+		}
 
-    }
+	}
 
 }
 
 
 void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,queue_t* qe, fpga_data_out_v * f1v, int channel, std::vector<struct extension_meta_t>& extension_meta){
-    int rc = 0;
-     
-    if(f1v->n != 0){   
-        if(bwa_verbose >= 10) {
-            printf("Num entries in read_from_fpga : %zd\n",f1v->n);
-        }
+	int rc = 0;
+	 
+	if(f1v->n != 0){   
+		if(bwa_verbose >= 10) {
+			printf("Num entries in read_from_fpga : %zd\n",f1v->n);
+		}
 
-        size_t read_buffer_size = f1v->n * 64; //FIXME
+		size_t read_buffer_size = f1v->n * 64; //FIXME
 
 #ifdef ENABLE_FPGA
-        uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G);
+		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G);
 		int total_lines = XXX;
 
-        get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta);
+		get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta);
 
-        if(read_buffer) {
-            free(read_buffer);
-        }
+		if(read_buffer) {
+			free(read_buffer);
+		}
 #endif
-    }
-    
+	}
+	
 }
 
 void delete_queue_entry(queue_t *qe){
-    if(qe == NULL){
-        return;
-    }
+	if(qe == NULL){
+		return;
+	}
 
 
-    // Pass on qe to the next stage
+	// Pass on qe to the next stage
 
-    if(qe->chains) {
-        free(qe->chains);
-    }
-    if(qe->regs) {
-        int i = 0;
-        for(i=0;i<qe->num;i++){
-            if(qe->regs[i]->a)
-                free(qe->regs[i]->a);
-        }
-        free(qe->regs);
-    }
-    if(qe->seqs){
-        free(qe->seqs);
-    }
-    free(qe);
-    qe = NULL;
-    return;
+	if(qe->chains) {
+		free(qe->chains);
+	}
+	if(qe->regs) {
+		int i = 0;
+		for(i=0;i<qe->num;i++){
+			if(qe->regs[i]->a)
+				free(qe->regs[i]->a);
+		}
+		free(qe->regs);
+	}
+	if(qe->seqs){
+		free(qe->seqs);
+	}
+	free(qe);
+	qe = NULL;
+	return;
 }
 
 
@@ -2581,12 +2581,12 @@ void delete_queue_entry(queue_t *qe){
 
 
 /*typedef struct {
-    worker_t *w_master;     // Location of master with all sequences
-    queue *queue1;          // Location of common queue for fpga
-    int tid;                // Thread id
+	worker_t *w_master;     // Location of master with all sequences
+	queue *queue1;          // Location of common queue for fpga
+	int tid;                // Thread id
 
-    // Sequences processed by any thread will be all seqs starting from tid*BATCH_SIZE;
-    // next batch to be processed will be opt->n_threads*BATCH_SIZE
+	// Sequences processed by any thread will be all seqs starting from tid*BATCH_SIZE;
+	// next batch to be processed will be opt->n_threads*BATCH_SIZE
 
 } worker_slave_t;*/
 
@@ -2599,344 +2599,344 @@ void delete_queue_entry(queue_t *qe){
 
 void worker1_ST(void *data){
 
-    worker_slave_t *slave_data = (worker_slave_t*)data;
-    int tid = slave_data->tid;
+	worker_slave_t *slave_data = (worker_slave_t*)data;
+	int tid = slave_data->tid;
 
-    worker_t *w = slave_data->w_master;
-    queue *q = w->queue1;
-    int n_threads = w->opt->n_threads;
+	worker_t *w = slave_data->w_master;
+	queue *q = w->queue1;
+	int n_threads = w->opt->n_threads;
 
-    int64_t i = 0;
-    int j = 0;
+	int64_t i = 0;
+	int j = 0;
 
-    queue_t *qe;
+	queue_t *qe;
 
 
-    /*if(w->n_processed == 0){
-    }*/
+	/*if(w->n_processed == 0){
+	}*/
 
-    for(i = tid*BATCH_SIZE;i<w->n_processed;i += n_threads*BATCH_SIZE){
-         
-        qe = (queue_t*)malloc(sizeof(queue_t));
-        qe->regs = (mem_alnreg_v **)malloc(BATCH_SIZE * sizeof(mem_alnreg_v *));
-        qe->chains = (mem_chain_v **)malloc(BATCH_SIZE * sizeof(mem_chain_v *));
-        qe->seqs = (bseq1_t **)malloc(BATCH_SIZE * sizeof(bseq1_t *));
-        qe->num = 0;
-        qe->last_entry = 0;
-        qe->starting_read_id = i;
-        for(j = 0;j<BATCH_SIZE;j++){
+	for(i = tid*BATCH_SIZE;i<w->n_processed;i += n_threads*BATCH_SIZE){
+		 
+		qe = (queue_t*)malloc(sizeof(queue_t));
+		qe->regs = (mem_alnreg_v **)malloc(BATCH_SIZE * sizeof(mem_alnreg_v *));
+		qe->chains = (mem_chain_v **)malloc(BATCH_SIZE * sizeof(mem_chain_v *));
+		qe->seqs = (bseq1_t **)malloc(BATCH_SIZE * sizeof(bseq1_t *));
+		qe->num = 0;
+		qe->last_entry = 0;
+		qe->starting_read_id = i;
+		for(j = 0;j<BATCH_SIZE;j++){
 
-            if(i+j < w->n_processed){
-                w->seqs[i+j].read_id = i+j;
-                qe->seqs[j] = &w->seqs[i+j];
-                qe->num++;
+			if(i+j < w->n_processed){
+				w->seqs[i+j].read_id = i+j;
+				qe->seqs[j] = &w->seqs[i+j];
+				qe->num++;
 
-                if (!(w->opt->flag&MEM_F_PE)) {
-                        if (bwa_verbose >= 4) printf("=====> Processing read '%s'| (i+j) = %ld  <=====\n", w->seqs[i+j].name,(i+j));
-                        
-                        seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[i+j].l_seq, w->seqs[i+j].seq, w->aux[tid], &qe->chains[j]);
+				if (!(w->opt->flag&MEM_F_PE)) {
+						if (bwa_verbose >= 4) printf("=====> Processing read '%s'| (i+j) = %ld  <=====\n", w->seqs[i+j].name,(i+j));
+						
+						seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[i+j].l_seq, w->seqs[i+j].seq, w->aux[tid], &qe->chains[j]);
 //                        qe->regs[j] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[i+j].l_seq, w->seqs[i+j].seq, w->aux[tid],&f1, &qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)(i+j));
-                        //qe->fpga_results->a[j].fpga_entry_present = f1.fpga_entry_present;
-                        /*if(f1.fpga_entry_present){
-                            qe->fpga_results->n++;
-                        }*/
-                        //smem_aux_destroy(aux1);
+						//qe->fpga_results->a[j].fpga_entry_present = f1.fpga_entry_present;
+						/*if(f1.fpga_entry_present){
+							qe->fpga_results->n++;
+						}*/
+						//smem_aux_destroy(aux1);
 
-                } else {
-                        if (bwa_verbose >= 4) printf("=====> Processing read '%s'/1 <=====\n", w->seqs[(i+j)<<1|0].name);
-                        seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|0].l_seq, w->seqs[(i+j)<<1|0].seq, w->aux[tid], &qe->chains[j<<1|0]);
-                        //qe->regs[(j)<<1|0] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|0].l_seq, w->seqs[(i+j)<<1|0].seq, w->aux[tid],&f1,&qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)((i+j)<<1|0));
-                        //qe->fpga_results->a[j<<1|0].fpga_entry_present = f1.fpga_entry_present;
-                        //if(f1.fpga_entry_present){
-                        //    qe->fpga_results->n++;
-                        //}
-                        //smem_aux_destroy(aux1);
-                        
-                        if (bwa_verbose >= 4) printf("=====> Processing read '%s'/2 <=====\n", w->seqs[(i+j)<<1|1].name);
+				} else {
+						if (bwa_verbose >= 4) printf("=====> Processing read '%s'/1 <=====\n", w->seqs[(i+j)<<1|0].name);
+						seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|0].l_seq, w->seqs[(i+j)<<1|0].seq, w->aux[tid], &qe->chains[j<<1|0]);
+						//qe->regs[(j)<<1|0] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|0].l_seq, w->seqs[(i+j)<<1|0].seq, w->aux[tid],&f1,&qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)((i+j)<<1|0));
+						//qe->fpga_results->a[j<<1|0].fpga_entry_present = f1.fpga_entry_present;
+						//if(f1.fpga_entry_present){
+						//    qe->fpga_results->n++;
+						//}
+						//smem_aux_destroy(aux1);
+						
+						if (bwa_verbose >= 4) printf("=====> Processing read '%s'/2 <=====\n", w->seqs[(i+j)<<1|1].name);
 
-                        seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|1].l_seq, w->seqs[(i+j)<<1|1].seq, w->aux[tid], &qe->chains[j<<1|1]);
-                        //qe->regs[(j)<<1|1] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|1].l_seq, w->seqs[(i+j)<<1|1].seq, w->aux[tid],&f1,&qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)((i+j)<<1|1));
-                        //qe->fpga_results->a[i<<1|1].fpga_entry_present = f1.fpga_entry_present;
-                        //if(f1.fpga_entry_present){
-                        //    qe->fpga_results->n++;
-                        //}
-                        //smem_aux_destroy(aux1);
-                }
-                
-            }
-            else{
-                break;
-            }
-             
-        
-        }
-        /*if((i+BATCH_SIZE) >= w->n_processed){
-            qe->last_entry = 1;
-        }*/
+						seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|1].l_seq, w->seqs[(i+j)<<1|1].seq, w->aux[tid], &qe->chains[j<<1|1]);
+						//qe->regs[(j)<<1|1] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|1].l_seq, w->seqs[(i+j)<<1|1].seq, w->aux[tid],&f1,&qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)((i+j)<<1|1));
+						//qe->fpga_results->a[i<<1|1].fpga_entry_present = f1.fpga_entry_present;
+						//if(f1.fpga_entry_present){
+						//    qe->fpga_results->n++;
+						//}
+						//smem_aux_destroy(aux1);
+				}
+				
+			}
+			else{
+				break;
+			}
+			 
+		
+		}
+		/*if((i+BATCH_SIZE) >= w->n_processed){
+			qe->last_entry = 1;
+		}*/
 
-        
-        // Grab queue mutex and add queue_element in the queue
-        pthread_mutex_lock (q->mut);
-        while (q->full) {
-            if(bwa_verbose >= 18){
-                printf ("producer: queue FULL.\n");
-            }
-            pthread_cond_wait (q->notFull, q->mut);
-        }
-        queueAdd (q, qe);
-        pthread_mutex_unlock (q->mut);
-        pthread_cond_signal (q->notEmpty);
+		
+		// Grab queue mutex and add queue_element in the queue
+		pthread_mutex_lock (q->mut);
+		while (q->full) {
+			if(bwa_verbose >= 18){
+				printf ("producer: queue FULL.\n");
+			}
+			pthread_cond_wait (q->notFull, q->mut);
+		}
+		queueAdd (q, qe);
+		pthread_mutex_unlock (q->mut);
+		pthread_cond_signal (q->notEmpty);
 
-    }
+	}
 
-    pthread_exit(0);
-    //return;
+	pthread_exit(0);
+	//return;
 }
 
 void worker1_MT(void *data){
-    worker_t *w = (worker_t*)data;
-    queue *q = w->queue1;
-    int i = 0;
+	worker_t *w = (worker_t*)data;
+	queue *q = w->queue1;
+	int i = 0;
 
-    pthread_t *w1_slaves = (pthread_t*)malloc(w->opt->n_threads * sizeof(pthread_t));
-    worker_slave_t **slaves = (worker_slave_t**)malloc(w->opt->n_threads * sizeof(worker_slave_t*));
+	pthread_t *w1_slaves = (pthread_t*)malloc(w->opt->n_threads * sizeof(pthread_t));
+	worker_slave_t **slaves = (worker_slave_t**)malloc(w->opt->n_threads * sizeof(worker_slave_t*));
 
 
-    for(i = 0;i<w->opt->n_threads;i++){
-        slaves[i] = (worker_slave_t*)malloc(sizeof(worker_slave_t));
-        slaves[i]->w_master = w;
-        slaves[i]->tid = i;
-        pthread_create (&w1_slaves[i], NULL, worker1_ST, slaves[i]);
-    }
+	for(i = 0;i<w->opt->n_threads;i++){
+		slaves[i] = (worker_slave_t*)malloc(sizeof(worker_slave_t));
+		slaves[i]->w_master = w;
+		slaves[i]->tid = i;
+		pthread_create (&w1_slaves[i], NULL, worker1_ST, slaves[i]);
+	}
 
-    for(i = 0;i<w->opt->n_threads;i++){
-        pthread_join (w1_slaves[i], NULL);
-        free(slaves[i]);
-    }
-    
-    free(slaves);
-    free(w1_slaves);
+	for(i = 0;i<w->opt->n_threads;i++){
+		pthread_join (w1_slaves[i], NULL);
+		free(slaves[i]);
+	}
+	
+	free(slaves);
+	free(w1_slaves);
 
-    queue_t *qe;
-    qe = (queue_t*)malloc(sizeof(queue_t));
-    qe->num = 0;
-    qe->last_entry = 1;
-    qe->regs = NULL;
-    qe->chains = NULL;
-    qe->seqs = NULL;
-    pthread_mutex_lock (q->mut);
-    while (q->full) {
-        if(bwa_verbose >= 18){
-            printf ("producer: queue FULL.\n");
-        }
-        pthread_cond_wait (q->notFull, q->mut);
-    }
-    queueAdd (q, qe);
-    pthread_mutex_unlock (q->mut);
-    pthread_cond_signal (q->notEmpty);
+	queue_t *qe;
+	qe = (queue_t*)malloc(sizeof(queue_t));
+	qe->num = 0;
+	qe->last_entry = 1;
+	qe->regs = NULL;
+	qe->chains = NULL;
+	qe->seqs = NULL;
+	pthread_mutex_lock (q->mut);
+	while (q->full) {
+		if(bwa_verbose >= 18){
+			printf ("producer: queue FULL.\n");
+		}
+		pthread_cond_wait (q->notFull, q->mut);
+	}
+	queueAdd (q, qe);
+	pthread_mutex_unlock (q->mut);
+	pthread_cond_signal (q->notEmpty);
 
-    
-    //return;
-    pthread_exit(0);
+	
+	//return;
+	pthread_exit(0);
 }
 
 void free_chains(mem_chain_v * chn){
-    int i = 0;
-    for(i=0;i<chn->n;i++){
-        free(chn->a[i].seeds);
-    }
-    free(chn->a);
-    free(chn);
+	int i = 0;
+	for(i=0;i<chn->n;i++){
+		free(chn->a[i].seeds);
+	}
+	free(chn->a);
+	free(chn);
 }
 
 
 static void fpga_worker(void *data){
-    queue_coll *qc = (queue_coll *)data;
-    worker_t * w = qc->w;
-    queue *q1 = qc->q1;
-    queue *q2 = qc->q2;
+	queue_coll *qc = (queue_coll *)data;
+	worker_t * w = qc->w;
+	queue *q1 = qc->q1;
+	queue *q2 = qc->q2;
 
-    // Grab mutex and get head of queue
+	// Grab mutex and get head of queue
 
-    queue_t *qe;
-    int last_entry = 0;
-    int rc = 0;
+	queue_t *qe;
+	int last_entry = 0;
+	int rc = 0;
 	std::vector<union SeedExLine> load_buffer1;
 	std::vector<union SeedExLine*> load_buffer_entry_idx1;
 	std::vector<union SeedExLine> load_buffer2;
 	std::vector<union SeedExLine*> load_buffer_entry_idx2;
 	std::vector<struct extension_meta_t> extension_meta;
-    int time_out = 0;
-    struct timespec start,end;
-    uint64_t timediff;
+	int time_out = 0;
+	struct timespec start,end;
+	uint64_t timediff;
 
 
-    fpga_data_out_v f1v;
-    fpga_data_out_t f1;
+	fpga_data_out_v f1v;
+	fpga_data_out_t f1;
 
 	load_buffer1.reserve(1024);
 	load_buffer2.reserve(1024);
 	extension_meta.reserve(1024);
-    f1v.load_buffer1 = &load_buffer1;
-    f1v.load_buffer_entry_idx1 = &load_buffer_entry_idx1;
-    f1v.load_buffer2 = &load_buffer2;
-    f1v.load_buffer_entry_idx2 = &load_buffer_entry_idx2;
+	f1v.load_buffer1 = &load_buffer1;
+	f1v.load_buffer_entry_idx1 = &load_buffer_entry_idx1;
+	f1v.load_buffer2 = &load_buffer2;
+	f1v.load_buffer_entry_idx2 = &load_buffer_entry_idx2;
 
-    while(1){
-        pthread_mutex_lock (q1->mut);
-        while (q1->empty) {
-            if(bwa_verbose >= 18)
-                printf ("consumer: queue EMPTY.\n");
-            pthread_cond_wait (q1->notEmpty, q1->mut);
-        }
+	while(1){
+		pthread_mutex_lock (q1->mut);
+		while (q1->empty) {
+			if(bwa_verbose >= 18)
+				printf ("consumer: queue EMPTY.\n");
+			pthread_cond_wait (q1->notEmpty, q1->mut);
+		}
 
-        queueDel (q1, &qe);
-        pthread_mutex_unlock (q1->mut);
-        pthread_cond_signal (q1->notFull);
-        //last_entry = 0;
-        last_entry = qe->last_entry;
-        fpga_mem_write_offset = 0;
+		queueDel (q1, &qe);
+		pthread_mutex_unlock (q1->mut);
+		pthread_cond_signal (q1->notFull);
+		//last_entry = 0;
+		last_entry = qe->last_entry;
+		fpga_mem_write_offset = 0;
 
-        if(last_entry == 0){
+		if(last_entry == 0){
 
-            time_out = 0;
+			time_out = 0;
 
-            int i = 0;
+			int i = 0;
 
-            f1v.a = (fpga_data_out_t *) malloc(qe->num * sizeof(fpga_data_out_t));
-            f1v.n = 0;
-    		extension_meta.push_back({0, 0, 0});
+			f1v.a = (fpga_data_out_t *) malloc(qe->num * sizeof(fpga_data_out_t));
+			f1v.n = 0;
+			extension_meta.push_back({0, 0, 0});
 
 			mem_alnreg_v_v * alnregs = (mem_alnreg_v_v *)malloc(qe->num * sizeof(mem_alnreg_v_v)); // read->chain->reg
 
-            for(i = 0;i<qe->num;i++){
-                f1.fpga_entry_present = 0;
-                extension_meta.back().read_idx = i;
-                seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 1);
-                // seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &qe->regs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 1);
-                // seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &qe->regs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 0);
+			for(i = 0;i<qe->num;i++){
+				f1.fpga_entry_present = 0;
+				extension_meta.back().read_idx = i;
+				seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 1);
+				// seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &qe->regs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 1);
+				// seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &qe->regs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 0);
 
-                f1v.a[i].fpga_entry_present = f1.fpga_entry_present;
-                if(f1.fpga_entry_present){
-                  f1v.n++;
-                }
-                // Dont free chains yet
-                //free(qe->chains[i]);
-            }
+				f1v.a[i].fpga_entry_present = f1.fpga_entry_present;
+				if(f1.fpga_entry_present){
+				  f1v.n++;
+				}
+				// Dont free chains yet
+				//free(qe->chains[i]);
+			}
 
 			// push sentinel
 			load_buffer1.push_back({PACKET_COMPLETE});
 			load_buffer2.push_back({PACKET_COMPLETE});
 
-            if(f1v.n != 0){
-                // load_buffer = (uint8_t *)realloc(load_buffer,load_buffer_size + write_buffer_capacity);
-                // memset(load_buffer + load_buffer_size,0,write_buffer_capacity);
+			if(f1v.n != 0){
+				// load_buffer = (uint8_t *)realloc(load_buffer,load_buffer_size + write_buffer_capacity);
+				// memset(load_buffer + load_buffer_size,0,write_buffer_capacity);
 
 #ifdef ENABLE_FPGA
-                write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer1.data(),load_buffer1.size() * sizeof(union SeedExLine),0);
+				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer1.data(),load_buffer1.size() * sizeof(union SeedExLine),0);
 
-                vdip = 0x0001;
+				vdip = 0x0001;
 
-                // PCI Poke can be used for writing small amounts of data on the OCL bus
-                rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+				// PCI Poke can be used for writing small amounts of data on the OCL bus
+				rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 
-                clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
-                while(1) {
+				clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
+				while(1) {
 
-                    rc = fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
+					rc = fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
 
-                    if((vled & 0x0001) == 0)  {
-                        break;
-                    }
+					if((vled & 0x0001) == 0)  {
+						break;
+					}
 
-                    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
-                    timediff = (end.tv_nsec - start.tv_nsec) * 1000000000 + (end.tv_sec - start.tv_sec);
-                    if(timediff > TIMEOUT){
-                        if(bwa_verbose >= 10){
-                            fprintf(stderr,"Going into timeout mode\n");
-                            fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
-                        }
-                        vdip = 0x0002;
-                        rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-                        vdip = 0x0000;
-                        rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-                        time_out = 1;
-                        break;
-                    }
-                }
-                if(time_out == 0){
-                    f1v.read_right = false;
-                    read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,3, extension_meta);
-                    vdip = 0x0000;
-                    rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-                }
+					clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
+					timediff = (end.tv_nsec - start.tv_nsec) * 1000000000 + (end.tv_sec - start.tv_sec);
+					if(timediff > TIMEOUT){
+						if(bwa_verbose >= 10){
+							fprintf(stderr,"Going into timeout mode\n");
+							fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
+						}
+						vdip = 0x0002;
+						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+						vdip = 0x0000;
+						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+						time_out = 1;
+						break;
+					}
+				}
+				if(time_out == 0){
+					f1v.read_right = false;
+					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,3, extension_meta);
+					vdip = 0x0000;
+					rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+				}
 #else
-                std::vector<union SeedExLine> read_buffer;
-                f1v.read_right = false;
-                fpga_func_model(w->opt, load_buffer1, load_buffer_entry_idx1, read_buffer);
-                get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
+				std::vector<union SeedExLine> read_buffer;
+				f1v.read_right = false;
+				fpga_func_model(w->opt, load_buffer1, load_buffer_entry_idx1, read_buffer);
+				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
 #endif
 
 
 
 #ifdef ENABLE_FPGA
-                // right ext
-                write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),0);
+				// right ext
+				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),0);
 
-                vdip = 0x0001;
+				vdip = 0x0001;
 
-                // PCI Poke can be used for writing small amounts of data on the OCL bus
-                rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+				// PCI Poke can be used for writing small amounts of data on the OCL bus
+				rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 
-                clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
-                while(1) {
+				clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
+				while(1) {
 
-                    rc = fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
+					rc = fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
 
-                    if((vled & 0x0001) == 0)  {
-                        break;
-                    }
+					if((vled & 0x0001) == 0)  {
+						break;
+					}
 
-                    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
-                    timediff = (end.tv_nsec - start.tv_nsec) * 1000000000 + (end.tv_sec - start.tv_sec);
-                    if(timediff > TIMEOUT){
-                        if(bwa_verbose >= 10){
-                            fprintf(stderr,"Going into timeout mode\n");
-                            fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
-                        }
-                        vdip = 0x0002;
-                        rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-                        vdip = 0x0000;
-                        rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-                        time_out = 1;
-                        break;
-                    }
-                }
-            
-                if(time_out == 0){
-                    f1v.read_right = true;
-                    read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,3, extension_meta);
-                    vdip = 0x0000;
-                    rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-                }
+					clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
+					timediff = (end.tv_nsec - start.tv_nsec) * 1000000000 + (end.tv_sec - start.tv_sec);
+					if(timediff > TIMEOUT){
+						if(bwa_verbose >= 10){
+							fprintf(stderr,"Going into timeout mode\n");
+							fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
+						}
+						vdip = 0x0002;
+						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+						vdip = 0x0000;
+						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+						time_out = 1;
+						break;
+					}
+				}
+			
+				if(time_out == 0){
+					f1v.read_right = true;
+					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,3, extension_meta);
+					vdip = 0x0000;
+					rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+				}
 #else
-                read_buffer.clear();
-                f1v.read_right = true;
-                fpga_func_model(w->opt, load_buffer2, load_buffer_entry_idx2, read_buffer);
-                get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
+				read_buffer.clear();
+				f1v.read_right = true;
+				fpga_func_model(w->opt, load_buffer2, load_buffer_entry_idx2, read_buffer);
+				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
 #endif
-            }
+			}
 
-            for(i = 0;i<qe->num;i++){
-    			qe->regs[i] = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
+			for(i = 0;i<qe->num;i++){
+				qe->regs[i] = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
 				kv_init(*qe->regs[i]);
 
 				// time_out = 1;
-                if(time_out == 1){
-                    seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 0);
+				if(time_out == 1){
+					seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 0);
 					kv_copy(mem_alnreg_t, *qe->regs[i], alnregs[i].a[0]);
 					kv_destroy(alnregs[i].a[0]);
-                } else {
+				} else {
 					// Perform postprocess
 					for (int j = 0; j < qe->chains[i]->n; ++j) {
 						postprocess_alnreg(w->opt, qe->seqs[i]->l_seq, &(qe->chains[i]->a[j]), &(alnregs[i].a[j]), qe->regs[i]);
@@ -2958,14 +2958,14 @@ static void fpga_worker(void *data){
 					if (p->rid >= 0 && w->bns->anns[p->rid].is_alt)
 						p->is_alt = 1;
 				}
-                // Free chains now
-                free_chains(qe->chains[i]);
+				// Free chains now
+				free_chains(qe->chains[i]);
 				free(alnregs[i].a);
-            }
+			}
 
-            free(f1v.a);
+			free(f1v.a);
 			free(alnregs);
-            f1v.n = 0;
+			f1v.n = 0;
 
 			load_buffer1.clear();
 			load_buffer2.clear();
@@ -2973,27 +2973,27 @@ static void fpga_worker(void *data){
 			load_buffer_entry_idx2.clear();
 			extension_meta.clear();
 
-        }
+		}
 
-        // Grab queue mutex and add queue_element in the queue
-        pthread_mutex_lock (q2->mut);
-        while (q2->full) {
-            if(bwa_verbose >= 18)
-                printf ("producer: queue FULL.\n");
-            pthread_cond_wait (q2->notFull, q2->mut);
-        }
-        queueAdd (q2, qe);
-        pthread_mutex_unlock (q2->mut);
-        pthread_cond_signal (q2->notEmpty);
+		// Grab queue mutex and add queue_element in the queue
+		pthread_mutex_lock (q2->mut);
+		while (q2->full) {
+			if(bwa_verbose >= 18)
+				printf ("producer: queue FULL.\n");
+			pthread_cond_wait (q2->notFull, q2->mut);
+		}
+		queueAdd (q2, qe);
+		pthread_mutex_unlock (q2->mut);
+		pthread_cond_signal (q2->notEmpty);
 
-        if(last_entry){
-            break;
-        }
+		if(last_entry){
+			break;
+		}
 
-    }
+	}
 
-    pthread_exit(0);
-    //return;
+	pthread_exit(0);
+	//return;
 }
 
 
@@ -3009,55 +3009,55 @@ void worker2_MT(void *data)
 	extern void mem_reg2ovlp(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, bseq1_t *s, mem_alnreg_v *a);
 
 
-    worker2_t *w = (worker2_t *)data;
-    queue *q = w->queue1;
-    queue_t *qe;
+	worker2_t *w = (worker2_t *)data;
+	queue *q = w->queue1;
+	queue_t *qe;
 
-    int last_entry;
+	int last_entry;
 	//worker_t *w = (worker_t*)data;
-    int i = 0;
+	int i = 0;
 
 
-    while(1){
-        pthread_mutex_lock (q->mut);
-        while (q->empty) {
-            if(bwa_verbose >= 18)
-                printf (" (T3) queue EMPTY.\n");
-            pthread_cond_wait (q->notEmpty, q->mut);
-        }
-        queueDel (q, &qe);
-        pthread_mutex_unlock (q->mut);
-        pthread_cond_signal (q->notFull);
-        last_entry = 0;
-        last_entry = qe->last_entry;
+	while(1){
+		pthread_mutex_lock (q->mut);
+		while (q->empty) {
+			if(bwa_verbose >= 18)
+				printf (" (T3) queue EMPTY.\n");
+			pthread_cond_wait (q->notEmpty, q->mut);
+		}
+		queueDel (q, &qe);
+		pthread_mutex_unlock (q->mut);
+		pthread_cond_signal (q->notFull);
+		last_entry = 0;
+		last_entry = qe->last_entry;
 
-        if(last_entry == 0){
-            for(i = 0;i<qe->num;i++){
-                if (!(w->opt->flag&MEM_F_PE)) {
-                    if (bwa_verbose >= 4) printf("(T3) =====> Finalizing read '%s' <=====\n", qe->seqs[i]->name);
+		if(last_entry == 0){
+			for(i = 0;i<qe->num;i++){
+				if (!(w->opt->flag&MEM_F_PE)) {
+					if (bwa_verbose >= 4) printf("(T3) =====> Finalizing read '%s' <=====\n", qe->seqs[i]->name);
 
-                    mem_mark_primary_se(w->opt, qe->regs[i]->n, qe->regs[i]->a, qe->starting_read_id + i);
-                    if (w->opt->flag & MEM_F_PRIMARY5) mem_reorder_primary5(w->opt->T, qe->regs[i]);
-                    mem_reg2sam(w->opt, w->bns, w->pac, qe->seqs[i], qe->regs[i], 0, 0);
-                    //free(w->regs[i].a);
-                } else {
-                    if (bwa_verbose >= 4) printf("=====> Finalizing read pair '%s' <=====\n", qe->seqs[i<<1|0]->name);
-                    mem_sam_pe(w->opt, w->bns, w->pac, w->pes, qe->starting_read_id + i, qe->seqs[i<<1], qe->regs[i<<1]);
-                    //free(w->regs[i<<1|0].a); free(w->regs[i<<1|1].a);
-                }
-            }
-        }
+					mem_mark_primary_se(w->opt, qe->regs[i]->n, qe->regs[i]->a, qe->starting_read_id + i);
+					if (w->opt->flag & MEM_F_PRIMARY5) mem_reorder_primary5(w->opt->T, qe->regs[i]);
+					mem_reg2sam(w->opt, w->bns, w->pac, qe->seqs[i], qe->regs[i], 0, 0);
+					//free(w->regs[i].a);
+				} else {
+					if (bwa_verbose >= 4) printf("=====> Finalizing read pair '%s' <=====\n", qe->seqs[i<<1|0]->name);
+					mem_sam_pe(w->opt, w->bns, w->pac, w->pes, qe->starting_read_id + i, qe->seqs[i<<1], qe->regs[i<<1]);
+					//free(w->regs[i<<1|0].a); free(w->regs[i<<1|1].a);
+				}
+			}
+		}
 
-        delete_queue_entry(qe);
-        if(last_entry){
-            break;
-        }
+		delete_queue_entry(qe);
+		if(last_entry){
+			break;
+		}
 
 
-    }
+	}
 
-    pthread_exit(0);
-    //return;
+	pthread_exit(0);
+	//return;
 }
 
 
@@ -3065,36 +3065,36 @@ void worker2_MT(void *data)
 /*static int
 check_slot_config(int slot_id)
 {
-    int rc;
-    struct fpga_mgmt_image_info info = {0};
+	int rc;
+	struct fpga_mgmt_image_info info = {0};
 
-    // get local image description, contains status, vendor id, and device id
-    rc = fpga_mgmt_describe_local_image(slot_id, &info, 0);
-    fail_on(rc, out, "Unable to get local image information. Are you running as root?");
+	// get local image description, contains status, vendor id, and device id
+	rc = fpga_mgmt_describe_local_image(slot_id, &info, 0);
+	fail_on(rc, out, "Unable to get local image information. Are you running as root?");
 
-    // check to see if the slot is ready
-    if (info.status != FPGA_STATUS_LOADED) {
-        rc = 1;
-        fail_on(rc, out, "Slot %d is not ready", slot_id);
-    }
+	// check to see if the slot is ready
+	if (info.status != FPGA_STATUS_LOADED) {
+		rc = 1;
+		fail_on(rc, out, "Slot %d is not ready", slot_id);
+	}
 
-    // confirm that the AFI that we expect is in fact loaded 
-    if (info.spec.map[FPGA_APP_PF].vendor_id != pci_vendor_id ||
-        info.spec.map[FPGA_APP_PF].device_id != pci_device_id) {
-        rc = 1;
-        printf("The slot appears loaded, but the pci vendor or device ID doesn't "
-               "match the expected values. You may need to rescan the fpga with \n"
-               "fpga-describe-local-image -S %i -R\n"
-               "Note that rescanning can change which device file in /dev/ a FPGA will map to.\n"
-               "To remove and re-add your edma driver and reset the device file mappings, run\n"
-               "`sudo rmmod edma-drv && sudo insmod <aws-fpga>/sdk/linux_kernel_drivers/edma/edma-drv.ko`\n",
-               slot_id);
-        fail_on(rc, out, "The PCI vendor id and device of the loaded image are "
-                         "not the expected values.");
-    }
+	// confirm that the AFI that we expect is in fact loaded 
+	if (info.spec.map[FPGA_APP_PF].vendor_id != pci_vendor_id ||
+		info.spec.map[FPGA_APP_PF].device_id != pci_device_id) {
+		rc = 1;
+		printf("The slot appears loaded, but the pci vendor or device ID doesn't "
+			   "match the expected values. You may need to rescan the fpga with \n"
+			   "fpga-describe-local-image -S %i -R\n"
+			   "Note that rescanning can change which device file in /dev/ a FPGA will map to.\n"
+			   "To remove and re-add your edma driver and reset the device file mappings, run\n"
+			   "`sudo rmmod edma-drv && sudo insmod <aws-fpga>/sdk/linux_kernel_drivers/edma/edma-drv.ko`\n",
+			   slot_id);
+		fail_on(rc, out, "The PCI vendor id and device of the loaded image are "
+						 "not the expected values.");
+	}
 
 out:
-    return rc;
+	return rc;
 }*/
 
 
@@ -3104,89 +3104,89 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 	extern void kt_for_batch(int n_threads, void (*func)(void*,int,int,int), void *data, int n, int batch_size); // [QA] new kt_for for batch processing
 	worker_t w;
 	worker2_t w2;
-    queue_coll qc;
+	queue_coll qc;
 	mem_pestat_t pes[4];
 	double ctime, rtime;
 	int i,j,total_qual;
-    int slot_id = 0;
+	int slot_id = 0;
 
 
-        ctime = cputime(); rtime = realtime();
-        int rc;
+		ctime = cputime(); rtime = realtime();
+		int rc;
 
 
-    for(i=0;i<n;i++){
-        total_qual = 0;
-        int l_seq = seqs[i].l_seq;
-        for(j=0;j<l_seq;j++){
-            total_qual += ((int)seqs[i].qual[j] - 33);
-        }
-        seqs[i].avg_qual =(uint8_t) (total_qual / l_seq);
-    }
+	for(i=0;i<n;i++){
+		total_qual = 0;
+		int l_seq = seqs[i].l_seq;
+		for(j=0;j<l_seq;j++){
+			total_qual += ((int)seqs[i].qual[j] - 33);
+		}
+		seqs[i].avg_qual =(uint8_t) (total_qual / l_seq);
+	}
 
-        fpga_mem_write_offset = 0;
+		fpga_mem_write_offset = 0;
 
-        fpga_pci_local = fpga_pci;
-
-
-
-
-        global_bns = bns;
-
-        w.opt = opt; w.bwt = bwt; w.bns = bns; w.pac = pac;
-        w.seqs = seqs; w.n_processed = n_processed;
-        w.pes = &pes[0];
-        w.aux = malloc(opt->n_threads * sizeof(smem_aux_t));
-        
-        w2.opt = opt; w2.bwt = bwt; w2.bns = bns; w2.pac = pac;
-        w2.pes = &pes[0];
-
-
-        w.n_processed = n;
-
-        // Queue init
-        w.queue1 = queueInit();
-
-        if (w.queue1 ==  NULL) {
-            fprintf (stderr,"main: Queue Init failed.\n");
-            exit (1);
-        }
-
-        w2.queue1 = queueInit();
-        if (w2.queue1 ==  NULL) {
-            fprintf (stderr,"main: Queue 2 Init failed.\n");
-            exit (1);
-        }
-
-        qc.q1 = w.queue1;
-        qc.q2 = w2.queue1;
-        qc.w = &w;
-
-        for (i = 0; i < opt->n_threads; ++i)
-            w.aux[i] = smem_aux_init();
-        //kt_for(opt->n_threads, worker1, &w, (opt->flag&MEM_F_PE)? n>>1 : n); // find mapping positions
-	    //kt_for_batch(opt->n_threads, worker1_MT, &w, n, BATCH_SIZE); // find mapping positions
-        //
-        //
-
-        // Create producer and consumer thread
-        
-
-        pthread_t s1, s2, s3;
-        pthread_create (&s1, NULL, worker1_MT, &w);
-        pthread_create (&s2, NULL, fpga_worker, &qc);
-        pthread_create (&s3, NULL, worker2_MT, &w2);
-        pthread_join (s1, NULL);
-        pthread_join (s2, NULL);
-        pthread_join (s3, NULL);
-        queueDelete (w.queue1);
-        queueDelete (w2.queue1);
+		fpga_pci_local = fpga_pci;
 
 
 
-        for (i = 0; i < opt->n_threads; ++i)
-            smem_aux_destroy(w.aux[i]);
-	    free(w.aux);
+
+		global_bns = bns;
+
+		w.opt = opt; w.bwt = bwt; w.bns = bns; w.pac = pac;
+		w.seqs = seqs; w.n_processed = n_processed;
+		w.pes = &pes[0];
+		w.aux = malloc(opt->n_threads * sizeof(smem_aux_t));
+		
+		w2.opt = opt; w2.bwt = bwt; w2.bns = bns; w2.pac = pac;
+		w2.pes = &pes[0];
+
+
+		w.n_processed = n;
+
+		// Queue init
+		w.queue1 = queueInit();
+
+		if (w.queue1 ==  NULL) {
+			fprintf (stderr,"main: Queue Init failed.\n");
+			exit (1);
+		}
+
+		w2.queue1 = queueInit();
+		if (w2.queue1 ==  NULL) {
+			fprintf (stderr,"main: Queue 2 Init failed.\n");
+			exit (1);
+		}
+
+		qc.q1 = w.queue1;
+		qc.q2 = w2.queue1;
+		qc.w = &w;
+
+		for (i = 0; i < opt->n_threads; ++i)
+			w.aux[i] = smem_aux_init();
+		//kt_for(opt->n_threads, worker1, &w, (opt->flag&MEM_F_PE)? n>>1 : n); // find mapping positions
+		//kt_for_batch(opt->n_threads, worker1_MT, &w, n, BATCH_SIZE); // find mapping positions
+		//
+		//
+
+		// Create producer and consumer thread
+		
+
+		pthread_t s1, s2, s3;
+		pthread_create (&s1, NULL, worker1_MT, &w);
+		pthread_create (&s2, NULL, fpga_worker, &qc);
+		pthread_create (&s3, NULL, worker2_MT, &w2);
+		pthread_join (s1, NULL);
+		pthread_join (s2, NULL);
+		pthread_join (s3, NULL);
+		queueDelete (w.queue1);
+		queueDelete (w2.queue1);
+
+
+
+		for (i = 0; i < opt->n_threads; ++i)
+			smem_aux_destroy(w.aux[i]);
+		free(w.aux);
 
 
 	/*if (opt->flag&MEM_F_PE) { // infer insert sizes if not provided
@@ -3194,14 +3194,14 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 		else mem_pestat(opt, bns->l_pac, n, w.regs, pes); // otherwise, infer the insert size distribution from data
 	}*/
 	//kt_for(opt->n_threads, worker2, &w, (opt->flag&MEM_F_PE)? n>>1 : n); // generate alignment
-    //if (fd >= 0) {
-    //close(fd);
-    //}
-    //rc = fpga_mgmt_close();
+	//if (fd >= 0) {
+	//close(fd);
+	//}
+	//rc = fpga_mgmt_close();
 	if (bwa_verbose >= 3){
 		fprintf(stderr, "[M::%s] Processed %d reads in %.3f CPU sec, %.3f real sec\n", __func__, n, cputime() - ctime, realtime() - rtime);
 		fprintf(stderr, " Processed seeds : %ld\n",total_seeds);
-    }
+	}
 
 }
 
