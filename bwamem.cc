@@ -2121,14 +2121,15 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
 					for (int j = 0; j < alnregs->n; j++) free(alnregs->a[j].a);
 					// kv_resize(mem_alnreg_v, *alnregs, 0);
 					alnregs->n = 0;
-					memset(&alnregs->a[0], 0, sizeof(mem_alnreg_v));
 				}
 				regs = kv_pushp(mem_alnreg_v, *alnregs);
+				memset(regs, 0, sizeof(mem_alnreg_v));
 			}
             mem_chain2aln(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
         }
 		else {
 			regs = kv_pushp(mem_alnreg_v, *alnregs);
+			memset(regs, 0, sizeof(mem_alnreg_v));
 			if ((rmax1 - rmax0) > 250) {
   	          	// Max allowed ref length
 				mem_chain2aln_cpu(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
@@ -2457,9 +2458,9 @@ void rerun_right_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_
 	} else a->qe = l_query, a->re = s->rbeg + s->len;
 }
 
-void get_all_scores(const worker_t *w, uint8_t *read_buffer,queue_t *qe,fpga_data_out_v * f1v, std::vector<struct extension_meta_t>& extension_meta, mem_alnreg_v_v *alnregs){
+void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, queue_t *qe,fpga_data_out_v * f1v, std::vector<struct extension_meta_t>& extension_meta, mem_alnreg_v_v *alnregs){
     int i = 0;
-    for(i=0;i<f1v->n;i++){
+    for(i=0;i<total_lines;i++){
         if(bwa_verbose >= 15){
             int k1=0,i1=0;
             for(k1 = 63;k1>=0;k1--) {
@@ -2529,8 +2530,9 @@ void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,qu
 
 #ifdef ENABLE_FPGA
         uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G);
+		int total_lines = XXX;
 
-        get_all_scores(w,read_buffer,qe,f1v,extension_meta);
+        get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta);
 
         if(read_buffer) {
             free(read_buffer);
@@ -2872,7 +2874,7 @@ static void fpga_worker(void *data){
                 std::vector<union SeedExLine> read_buffer;
                 f1v.read_right = false;
                 fpga_func_model(w->opt, load_buffer1, load_buffer_entry_idx1, read_buffer);
-                get_all_scores(w,(uint8_t *)read_buffer.data(),qe,&f1v,extension_meta, alnregs);
+                get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
 #endif
 
 
@@ -2921,7 +2923,7 @@ static void fpga_worker(void *data){
                 read_buffer.clear();
                 f1v.read_right = true;
                 fpga_func_model(w->opt, load_buffer2, load_buffer_entry_idx2, read_buffer);
-                get_all_scores(w,(uint8_t *)read_buffer.data(),qe,&f1v,extension_meta, alnregs);
+                get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
 #endif
             }
 
