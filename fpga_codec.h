@@ -51,7 +51,7 @@ struct PACKED ResultEntry
     uint8_t tle;
     uint8_t gtle;
     uint8_t exception;
-    uint8_t spacing;
+    uint8_t spacing[2];
 };
 
 struct PACKED ResultLine

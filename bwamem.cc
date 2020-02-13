@@ -39,6 +39,7 @@
 #define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
+#define NUM_FPGA_THREADS	2
 /* Theory on probability and scoring *ungapped* alignment
  *
  * s'(a,b) = log[P(b|a)/P(b)] = log[4P(b|a)], assuming uniform base distribution
@@ -135,6 +136,7 @@ typedef struct {
 	queue *q1;      // Queue for stage 1 - 2 ( worker1_MT  |   q1   | fpga_worker)
 	queue *q2;      // Queue for stage 2 - 3 ( fpga_worker |   q2   | worker2_MT)
 	worker_t * w;
+	pthread_mutex_t *seedex_mut;
 } queue_coll;       // Collection of queues
 
 
@@ -2472,6 +2474,7 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 			printf("\n");
 		}
 
+		static_assert(sizeof(ResultLine) == sizeof(SeedExLine), "Line size mismatch");
 		struct ResultLine* results = ((struct ResultLine*) read_buffer) + i;
 
 		// memcpy(&read_id,read_buffer + i*64 + 1,4);
@@ -2526,11 +2529,11 @@ void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,qu
 			printf("Num entries in read_from_fpga : %zd\n",f1v->n);
 		}
 
-		size_t read_buffer_size = f1v->n * 64; //FIXME
+		size_t total_lines = ((f1v->read_right? f1v->load_buffer_entry_idx2->size() : f1v->load_buffer_entry_idx1->size()) - 2 + (sizeof(ResultLine::results) / sizeof(ResultEntry))) / (sizeof(ResultLine::results) / sizeof(ResultEntry)) ;
+		size_t read_buffer_size = total_lines * 64;
 
 #ifdef ENABLE_FPGA
 		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G);
-		int total_lines = XXX;
 
 		get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta);
 
@@ -2731,7 +2734,7 @@ void worker1_MT(void *data){
 		}
 		pthread_cond_wait (q->notFull, q->mut);
 	}
-	queueAdd (q, qe);
+	for (int j = 0; j < NUM_FPGA_THREADS; ++j) queueAdd (q, qe);
 	pthread_mutex_unlock (q->mut);
 	pthread_cond_signal (q->notEmpty);
 
@@ -2837,6 +2840,8 @@ static void fpga_worker(void *data){
 
 				vdip = 0x0001;
 
+				pthread_mutex_lock (qc->seedex_mut);
+
 				// PCI Poke can be used for writing small amounts of data on the OCL bus
 				rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 
@@ -2864,6 +2869,8 @@ static void fpga_worker(void *data){
 						break;
 					}
 				}
+
+				pthread_mutex_unlock (qc->seedex_mut);
 				if(time_out == 0){
 					f1v.read_right = false;
 					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,3, extension_meta);
@@ -2873,8 +2880,11 @@ static void fpga_worker(void *data){
 #else
 				std::vector<union SeedExLine> read_buffer;
 				f1v.read_right = false;
+				pthread_mutex_lock (qc->seedex_mut);
 				fpga_func_model(w->opt, load_buffer1, load_buffer_entry_idx1, read_buffer);
-				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
+				pthread_mutex_unlock (qc->seedex_mut);
+				int total_lines = (read_buffer.size() + (sizeof(ResultLine::results) / sizeof(ResultEntry)) - 1)/(sizeof(ResultLine::results) / sizeof(ResultEntry));
+				get_all_scores(w,(uint8_t *)read_buffer.data(),total_lines,qe,&f1v,extension_meta, alnregs);
 #endif
 
 
@@ -2885,6 +2895,8 @@ static void fpga_worker(void *data){
 
 				vdip = 0x0001;
 
+				pthread_mutex_lock (qc->seedex_mut);
+
 				// PCI Poke can be used for writing small amounts of data on the OCL bus
 				rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 
@@ -2912,7 +2924,8 @@ static void fpga_worker(void *data){
 						break;
 					}
 				}
-			
+
+				pthread_mutex_unlock (qc->seedex_mut);
 				if(time_out == 0){
 					f1v.read_right = true;
 					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,3, extension_meta);
@@ -2922,8 +2935,11 @@ static void fpga_worker(void *data){
 #else
 				read_buffer.clear();
 				f1v.read_right = true;
+				pthread_mutex_lock (qc->seedex_mut);
 				fpga_func_model(w->opt, load_buffer2, load_buffer_entry_idx2, read_buffer);
-				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
+				pthread_mutex_unlock (qc->seedex_mut);
+				total_lines = (read_buffer.size() + (sizeof(ResultLine::results) / sizeof(ResultEntry)) - 1)/(sizeof(ResultLine::results) / sizeof(ResultEntry));
+				get_all_scores(w,(uint8_t *)read_buffer.data(),total_lines,qe,&f1v,extension_meta, alnregs);
 #endif
 			}
 
@@ -3014,6 +3030,7 @@ void worker2_MT(void *data)
 	queue_t *qe;
 
 	int last_entry;
+	int total_last_entries = 0;
 	//worker_t *w = (worker_t*)data;
 	int i = 0;
 
@@ -3030,6 +3047,7 @@ void worker2_MT(void *data)
 		pthread_cond_signal (q->notFull);
 		last_entry = 0;
 		last_entry = qe->last_entry;
+		total_last_entries += last_entry;
 
 		if(last_entry == 0){
 			for(i = 0;i<qe->num;i++){
@@ -3046,10 +3064,11 @@ void worker2_MT(void *data)
 					//free(w->regs[i<<1|0].a); free(w->regs[i<<1|1].a);
 				}
 			}
+			delete_queue_entry(qe);
 		}
 
-		delete_queue_entry(qe);
-		if(last_entry){
+		if(total_last_entries >= NUM_FPGA_THREADS){
+			delete_queue_entry(qe);
 			break;
 		}
 
@@ -3162,6 +3181,11 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 		qc.q2 = w2.queue1;
 		qc.w = &w;
 
+		// SeedEx Mutex
+		qc.seedex_mut = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t));
+		pthread_mutex_init (qc.seedex_mut, NULL);
+
+
 		for (i = 0; i < opt->n_threads; ++i)
 			w.aux[i] = smem_aux_init();
 		//kt_for(opt->n_threads, worker1, &w, (opt->flag&MEM_F_PE)? n>>1 : n); // find mapping positions
@@ -3172,16 +3196,18 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 		// Create producer and consumer thread
 		
 
-		pthread_t s1, s2, s3;
+		pthread_t s1, s2[NUM_FPGA_THREADS], s3;
 		pthread_create (&s1, NULL, worker1_MT, &w);
-		pthread_create (&s2, NULL, fpga_worker, &qc);
+		for (int j = 0; j < NUM_FPGA_THREADS; ++j) pthread_create (&s2[j], NULL, fpga_worker, &qc);
 		pthread_create (&s3, NULL, worker2_MT, &w2);
 		pthread_join (s1, NULL);
-		pthread_join (s2, NULL);
+		for (int j = 0; j < NUM_FPGA_THREADS; ++j) pthread_join (s2[j], NULL);
 		pthread_join (s3, NULL);
 		queueDelete (w.queue1);
 		queueDelete (w2.queue1);
 
+		pthread_mutex_destroy (qc.seedex_mut);
+		free(qc.seedex_mut);
 
 
 		for (i = 0; i < opt->n_threads; ++i)
