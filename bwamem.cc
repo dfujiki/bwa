@@ -1072,7 +1072,7 @@ struct SeedExPackageGen
     void * new_input (LineParams params, char * query, char * target, union SeedExLine* buf)
     {
         char payload_buf[72];
-        buf->ty1.preamble = 1u;
+        buf->ty1.preamble = PACKET_START;
         buf->ty1.params = params;
         query_ptr = query;
         target_ptr = target;
@@ -1087,8 +1087,8 @@ struct SeedExPackageGen
         if (params.qlen + padding < 72) /* |query------|padding---|nul---| */
         {
             memcpy(payload_buf, query, params.qlen);
-            memset(payload_buf + params.qlen, 0x6, padding);
-            memset(payload_buf + params.qlen + padding, 0x5, 72 - params.qlen - padding);
+            memset(payload_buf + params.qlen, C_PADDING, padding);
+            memset(payload_buf + params.qlen + padding, C_NULL, 72 - params.qlen - padding);
             query_ptr += params.qlen;
             padding = 0;
             has_next = false;
@@ -1096,7 +1096,7 @@ struct SeedExPackageGen
         else if (params.qlen < 72) /* |query------|padding---| */
         {
             memcpy(payload_buf, query, params.qlen);
-            memset(payload_buf + params.qlen, 0x6, 72 - params.qlen);
+            memset(payload_buf + params.qlen, C_PADDING, 72 - params.qlen);
             query_ptr += params.qlen;
             padding -= 72 - params.qlen;
             has_next = true;
@@ -1117,7 +1117,7 @@ struct SeedExPackageGen
         if (params.tlen < 72) /* |target------|nul---| */
         {
             memcpy(payload_buf, target, params.tlen);
-            memset(payload_buf + params.tlen, 0x5, 72 - params.tlen);
+            memset(payload_buf + params.tlen, C_NULL, 72 - params.tlen);
             target_ptr += params.tlen;
         }
         else /* |target-------------------|| */
@@ -1128,6 +1128,10 @@ struct SeedExPackageGen
         // printf("Target:\t"); for (int i = 0; i < 72; ++i) printf("%d", payload_buf[i]); putchar('\n');
         f_8to3(payload_buf, 72, buf->ty1.payload2);
 		tlen -= target_ptr - target;
+
+		if (!has_next) {
+        	buf->ty1.preamble = PACKET_END;
+		}
     }
 
     void * next(union SeedExLine* buf)
@@ -1136,15 +1140,15 @@ struct SeedExPackageGen
 
         char payload_buf[88];
 		char * orig_q = query_ptr, * orig_t = target_ptr;
-        buf->ty0.preamble = 0u;
-        memset(buf->ty0.payload, 0xffff, 63);
+        buf->ty0.preamble = PACKET_MIDDLE;
+        // memset(buf->ty0.payload, 0xffff, 63);
 
         // Query
         if (qlen + padding < 84) /* |query------|padding---|nul---| */
         {
             memcpy(payload_buf, query_ptr, qlen);
-            memset(payload_buf + qlen, 0x6, padding);
-            memset(payload_buf + qlen + padding, 0x5, 84 - qlen - padding);
+            memset(payload_buf + qlen, C_PADDING, padding);
+            memset(payload_buf + qlen + padding, C_NULL, 84 - qlen - padding);
             query_ptr += qlen;
             padding = 0;
             has_next = false;
@@ -1152,7 +1156,7 @@ struct SeedExPackageGen
         else if (qlen < 84) /* |query------|padding---| */
         {
             memcpy(payload_buf, query_ptr, qlen);
-            memset(payload_buf + qlen, 0x6, 84 - qlen);
+            memset(payload_buf + qlen, C_PADDING, 84 - qlen);
             query_ptr += qlen;
             padding -= 84 - qlen;
             assert(padding >= 0);
@@ -1175,7 +1179,7 @@ struct SeedExPackageGen
         if (tlen < 84) /* |target------|nul---| */
         {
             memcpy(buf_target_ptr, target_ptr, tlen);
-            memset(buf_target_ptr + tlen, 0x5, 84 - tlen);
+            memset(buf_target_ptr + tlen, C_NULL, 84 - tlen);
             target_ptr += tlen;
         }
         else /* |target-------------------|| */
@@ -1186,6 +1190,10 @@ struct SeedExPackageGen
         // printf("Target(w):\t"); for (int i = 0; i < 88; ++i) printf("%d", payload_buf[i]); putchar('\n');
         f_8to3(payload_buf, 88, &buf->ty0.payload[30]);
 		tlen -= target_ptr - orig_t;
+
+		if (!has_next) {
+        	buf->ty1.preamble = PACKET_END;
+		}
     }
 
     char * query_ptr;
@@ -1407,6 +1415,7 @@ void fpga_func_model(const mem_opt_t *opt, std::vector<union SeedExLine>& load_b
         char *target = calloc(tlen, sizeof(char));
         char *query_ptr = query;
         char *target_ptr = target;
+		assert(p->ty1.preamble == PACKET_START || p->ty1.preamble == PACKET_END);
 
         // decode first line
         f_3to8(p->ty1.payload1, 72, buf);
@@ -1415,7 +1424,7 @@ void fpga_func_model(const mem_opt_t *opt, std::vector<union SeedExLine>& load_b
 
         f_3to8(p->ty1.payload2, 72, buf);
         memcpy(target, buf, MIN(72, tlen));
-        target_ptr += MIN(72, qlen);
+        target_ptr += MIN(72, tlen);
 
         union SeedExLine *line = (union SeedExLine *)p + 1;
         while (target_ptr - target < tlen)
@@ -1430,6 +1439,7 @@ void fpga_func_model(const mem_opt_t *opt, std::vector<union SeedExLine>& load_b
 
             line++;
         }
+		assert((line-1)->ty0.preamble == PACKET_END);
 
         int lscore, gscore, tle, qle, gtle, max_off;
 	    lscore = ksw_extend2(qlen, query, tlen, target, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, w, opt->pen_clip5, opt->zdrop, init_score, &qle, &tle, &gtle, &gscore, &max_off);
@@ -2765,7 +2775,6 @@ static void fpga_worker(void *data){
 	load_buffer1.reserve(1024);
 	load_buffer2.reserve(1024);
 	extension_meta.reserve(1024);
-    extension_meta.push_back({0, 0, 0});
     f1v.load_buffer1 = &load_buffer1;
     f1v.load_buffer_entry_idx1 = &load_buffer_entry_idx1;
     f1v.load_buffer2 = &load_buffer2;
@@ -2794,6 +2803,7 @@ static void fpga_worker(void *data){
 
             f1v.a = (fpga_data_out_t *) malloc(qe->num * sizeof(fpga_data_out_t));
             f1v.n = 0;
+    		extension_meta.push_back({0, 0, 0});
 
 			mem_alnreg_v_v * alnregs = (mem_alnreg_v_v *)malloc(qe->num * sizeof(mem_alnreg_v_v)); // read->chain->reg
 
@@ -2812,8 +2822,9 @@ static void fpga_worker(void *data){
                 //free(qe->chains[i]);
             }
 
-            //fflush(stdout);
-
+			// push sentinel
+			load_buffer1.push_back({PACKET_COMPLETE});
+			load_buffer2.push_back({PACKET_COMPLETE});
 
             if(f1v.n != 0){
                 // load_buffer = (uint8_t *)realloc(load_buffer,load_buffer_size + write_buffer_capacity);
@@ -2953,6 +2964,12 @@ static void fpga_worker(void *data){
             free(f1v.a);
 			free(alnregs);
             f1v.n = 0;
+
+			load_buffer1.clear();
+			load_buffer2.clear();
+			load_buffer_entry_idx1.clear();
+			load_buffer_entry_idx2.clear();
+			extension_meta.clear();
 
         }
 

@@ -9,6 +9,14 @@
 
 #define PACKED __attribute__((__packed__))
 
+#define PACKET_MIDDLE       0u
+#define PACKET_START        1u
+#define PACKET_END          2u
+#define PACKET_COMPLETE     3u
+
+#define C_NULL              0x5
+#define C_PADDING           0x6
+
 struct PACKED LineParams
 {
     uint32_t seq_id;
