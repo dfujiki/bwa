@@ -2326,11 +2326,14 @@ void get_scores_left(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, 
 		printf("Read ID : %x\n",re->seq_id);
 	}
 
+	int lscore = (~re->lscore == 0)? -1 : re->lscore;
+	int gscore = (~re->gscore == 0)? -1 : re->gscore;
+
 	// store returned value
-	a->score = re->lscore;
+	a->score = lscore;
 
 	// check whether we prefer to reach the end of the query
-	if (re->gscore <= 0 || re->gscore <= a->score - opt->pen_clip5)
+	if (gscore <= 0 || gscore <= a->score - opt->pen_clip5)
 	{ // local extension
 		a->qb = s->qbeg - re->qle, a->rb = s->rbeg - re->tle;
 		a->truesc = a->score;
@@ -2338,7 +2341,7 @@ void get_scores_left(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns, 
 	else
 	{ // to-end extension
 		a->qb = 0, a->rb = s->rbeg - re->gtle;
-		a->truesc = re->gscore;
+		a->truesc = gscore;
 	}
 
 }
@@ -2360,11 +2363,14 @@ void get_scores_right(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns,
 		printf("Read ID : %x\n",re->seq_id);
 	}
 
+	int lscore = (~re->lscore == 0)? -1 : re->lscore;
+	int gscore = (~re->gscore == 0)? -1 : re->gscore;
+
 	// store returned value
-	a->score = re->lscore;
+	a->score = lscore;
 
 	// similar to the above
-	if (re->gscore <= 0 || re->gscore <= a->score - opt->pen_clip3)
+	if (gscore <= 0 || gscore <= a->score - opt->pen_clip3)
 	{ // local extension
 		a->qe = s->qbeg + s->len + re->qle, a->re = s->rbeg + s->len + re->tle;
 		a->truesc += a->score - sc0;
@@ -2372,7 +2378,7 @@ void get_scores_right(const mem_opt_t *opt, ResultEntry *re,const bntseq_t *bns,
 	else
 	{ // to-end extension
 		a->qe = l_query, a->re = s->rbeg + s->len + re->gtle;
-		a->truesc += re->gscore - sc0;
+		a->truesc += gscore - sc0;
 	}
 
 	// compute seedcov
@@ -2885,6 +2891,9 @@ static void fpga_worker(void *data){
 				pthread_mutex_lock (qc->seedex_mut);
 				fpga_func_model(w->opt, load_buffer1, load_buffer_entry_idx1, read_buffer);
 				pthread_mutex_unlock (qc->seedex_mut);
+
+				// FIXME:: Count only non-null from entry idx
+				// assert(read_buffer.size() == (load_buffer_entry_idx1.size() - 2 + (sizeof(ResultLine::results) / sizeof(ResultEntry))) / (sizeof(ResultLine::results) / sizeof(ResultEntry)) ) ;
 				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
 #endif
 
@@ -2939,6 +2948,7 @@ static void fpga_worker(void *data){
 				pthread_mutex_lock (qc->seedex_mut);
 				fpga_func_model(w->opt, load_buffer2, load_buffer_entry_idx2, read_buffer);
 				pthread_mutex_unlock (qc->seedex_mut);
+				// assert(read_buffer.size() == (load_buffer_entry_idx2.size() - 2 + (sizeof(ResultLine::results) / sizeof(ResultEntry))) / (sizeof(ResultLine::results) / sizeof(ResultEntry)) ) ;
 				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
 #endif
 			}

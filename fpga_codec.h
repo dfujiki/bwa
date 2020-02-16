@@ -45,8 +45,8 @@ struct PACKED SeedExLineTy0
 struct PACKED ResultEntry
 {
     uint32_t seq_id;
-    int8_t lscore;
-    int8_t gscore;
+    uint8_t lscore;
+    uint8_t gscore;
     uint8_t qle;
     uint8_t tle;
     uint8_t gtle;
