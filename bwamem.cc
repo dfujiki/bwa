@@ -36,6 +36,7 @@
 
 #define	MEM_16G		(1ULL << 34)
 #define BATCH_SIZE  100
+#define BATCH_LINE_LIMIT	16384
 #define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
@@ -2624,8 +2625,11 @@ void worker1_ST(void *data){
 	/*if(w->n_processed == 0){
 	}*/
 
-	for(i = tid*BATCH_SIZE;i<w->n_processed;i += n_threads*BATCH_SIZE){
-		 
+	// one thread will process k=(tot+nth-1)/nth seeds indexed as [tid * k, (tid + 1)k)
+	int K = (w->n_processed + n_threads - 1) / n_threads;
+	for(i = tid*K; i < (tid + 1) * K; i += j){
+		if (i>=w->n_processed) break;
+
 		qe = (queue_t*)malloc(sizeof(queue_t));
 		qe->regs = (mem_alnreg_v **)malloc(BATCH_SIZE * sizeof(mem_alnreg_v *));
 		qe->chains = (mem_chain_v **)malloc(BATCH_SIZE * sizeof(mem_chain_v *));
@@ -2634,6 +2638,7 @@ void worker1_ST(void *data){
 		qe->last_entry = 0;
 		qe->starting_read_id = i;
 		for(j = 0;j<BATCH_SIZE;j++){
+			int n_lines = 0;
 
 			if(i+j < w->n_processed){
 				w->seqs[i+j].read_id = i+j;
@@ -2644,6 +2649,7 @@ void worker1_ST(void *data){
 						if (bwa_verbose >= 4) printf("=====> Processing read '%s'| (i+j) = %ld  <=====\n", w->seqs[i+j].name,(i+j));
 						
 						seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[i+j].l_seq, w->seqs[i+j].seq, w->aux[tid], &qe->chains[j]);
+						n_lines += qe->chains[j]->n * 3;
 //                        qe->regs[j] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[i+j].l_seq, w->seqs[i+j].seq, w->aux[tid],&f1, &qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)(i+j));
 						//qe->fpga_results->a[j].fpga_entry_present = f1.fpga_entry_present;
 						/*if(f1.fpga_entry_present){
@@ -2654,6 +2660,7 @@ void worker1_ST(void *data){
 				} else {
 						if (bwa_verbose >= 4) printf("=====> Processing read '%s'/1 <=====\n", w->seqs[(i+j)<<1|0].name);
 						seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|0].l_seq, w->seqs[(i+j)<<1|0].seq, w->aux[tid], &qe->chains[j<<1|0]);
+						n_lines += qe->chains[j<<1|0]->n * 3;
 						//qe->regs[(j)<<1|0] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|0].l_seq, w->seqs[(i+j)<<1|0].seq, w->aux[tid],&f1,&qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)((i+j)<<1|0));
 						//qe->fpga_results->a[j<<1|0].fpga_entry_present = f1.fpga_entry_present;
 						//if(f1.fpga_entry_present){
@@ -2664,6 +2671,7 @@ void worker1_ST(void *data){
 						if (bwa_verbose >= 4) printf("=====> Processing read '%s'/2 <=====\n", w->seqs[(i+j)<<1|1].name);
 
 						seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|1].l_seq, w->seqs[(i+j)<<1|1].seq, w->aux[tid], &qe->chains[j<<1|1]);
+						n_lines += qe->chains[j<<1|1]->n * 3;
 						//qe->regs[(j)<<1|1] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|1].l_seq, w->seqs[(i+j)<<1|1].seq, w->aux[tid],&f1,&qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)((i+j)<<1|1));
 						//qe->fpga_results->a[i<<1|1].fpga_entry_present = f1.fpga_entry_present;
 						//if(f1.fpga_entry_present){
@@ -2671,7 +2679,15 @@ void worker1_ST(void *data){
 						//}
 						//smem_aux_destroy(aux1);
 				}
-				
+
+				if (n_lines >= BATCH_LINE_LIMIT) {
+					// err_printf("@@@ Limit batchsize to avoid buffer overflow (at:%d %d)\n", n_lines, j);
+					assert(j > 0 && "Batch line size is too small.");
+					// revoke last entry
+					qe->num--; j--;
+					break;
+				}
+
 			}
 			else{
 				break;
@@ -2783,9 +2799,9 @@ static void fpga_worker(void *data){
 	fpga_data_out_v f1v;
 	fpga_data_out_t f1;
 
-	load_buffer1.reserve(16384);
-	load_buffer2.reserve(16384);
-	extension_meta.reserve(16384);
+	load_buffer1.reserve(BATCH_LINE_LIMIT);
+	load_buffer2.reserve(BATCH_LINE_LIMIT);
+	extension_meta.reserve(BATCH_LINE_LIMIT);
 	f1v.load_buffer1 = &load_buffer1;
 	f1v.load_buffer_entry_idx1 = &load_buffer_entry_idx1;
 	f1v.load_buffer2 = &load_buffer2;
