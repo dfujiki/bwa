@@ -1,10 +1,5 @@
 #pragma once
 
-#include "bwt.h"
-#include "bntseq.h"
-#include "bwa.h"
-#include "bwamem.h"
-
 #include <vector>
 
 #define PACKED __attribute__((__packed__))
@@ -75,6 +70,12 @@ struct extension_meta_t
 };
 
 
+#ifndef NO_BWA
+
+#include "bwt.h"
+#include "bntseq.h"
+#include "bwa.h"
+#include "bwamem.h"
 typedef struct {
         // TODO add alignment entries
         uint8_t score;
@@ -93,3 +94,4 @@ typedef struct {
 	std::vector<union SeedExLine*>* load_buffer_entry_idx2;
 	std::vector<struct extension_meta_t>* extension_meta;
 } fpga_data_out_v;
+#endif

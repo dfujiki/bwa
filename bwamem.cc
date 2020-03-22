@@ -35,7 +35,7 @@
 #endif
 
 #define	MEM_16G		(1ULL << 34)
-#define BATCH_SIZE  100
+#define BATCH_SIZE  1000
 #define BATCH_LINE_LIMIT	16384
 #define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
@@ -138,6 +138,7 @@ typedef struct {
 	queue *q2;      // Queue for stage 2 - 3 ( fpga_worker |   q2   | worker2_MT)
 	worker_t * w;
 	pthread_mutex_t *seedex_mut;
+	int tid;
 } queue_coll;       // Collection of queues
 
 
@@ -1471,6 +1472,14 @@ void fpga_func_model(const mem_opt_t *opt, std::vector<union SeedExLine>& load_b
 	}
 }
 
+void dump_mem(const char *fname, const std::vector<union SeedExLine>& buf)
+{
+	FILE *fp = fopen(fname, "w");
+	assert(fname);
+	fwrite(buf.data(), sizeof(union SeedExLine), buf.size(), fp);
+	fclose(fp);
+}
+
 void mem_chain2aln_cpu(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av, int64_t rmax0, int64_t rmax1)
 {
 	int i, k, rid, max_off[2], aw[2]; // aw: actual bandwidth used in extension
@@ -2528,7 +2537,7 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 }
 
 
-void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,queue_t* qe, fpga_data_out_v * f1v, int channel, std::vector<struct extension_meta_t>& extension_meta){
+void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,queue_t* qe, fpga_data_out_v * f1v, int channel, uint64_t addr, std::vector<struct extension_meta_t>& extension_meta){
 	int rc = 0;
 	 
 	if(f1v->n != 0){   
@@ -2540,7 +2549,7 @@ void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,qu
 		size_t read_buffer_size = total_lines * 64;
 
 #ifdef ENABLE_FPGA
-		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G);
+		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G + addr);
 
 		get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta);
 
@@ -2682,7 +2691,7 @@ void worker1_ST(void *data){
 
 				if (n_lines >= BATCH_LINE_LIMIT) {
 					// err_printf("@@@ Limit batchsize to avoid buffer overflow (at:%d %d)\n", n_lines, j);
-					assert(j > 0 && "Batch line size is too small.");
+					assert(j > 0 && "Batch line size is too small (cannot pack even 1 read).");
 					// revoke last entry
 					qe->num--; j--;
 					break;
@@ -2780,6 +2789,7 @@ static void fpga_worker(void *data){
 	worker_t * w = qc->w;
 	queue *q1 = qc->q1;
 	queue *q2 = qc->q2;
+	const int tid = qc->tid;
 
 	// Grab mutex and get head of queue
 
@@ -2862,7 +2872,8 @@ static void fpga_worker(void *data){
 #ifdef ENABLE_FPGA
 				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer1.data(),load_buffer1.size() * sizeof(union SeedExLine),0);
 
-				vdip = 0x0001;
+				// vdip = 0x0001;
+				vdip = 2 * tid + 1;
 
 				pthread_mutex_lock (qc->seedex_mut);
 
@@ -2874,7 +2885,9 @@ static void fpga_worker(void *data){
 
 					rc = fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
 
-					if((vled & 0x0001) == 0)  {
+					if(vled == 0x10)  {
+						vdip = 0x0000;
+						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 						break;
 					}
 
@@ -2885,21 +2898,19 @@ static void fpga_worker(void *data){
 							fprintf(stderr,"Going into timeout mode\n");
 							fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
 						}
-						vdip = 0x0002;
+						vdip = 0xffffffff;
 						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-						vdip = 0x0000;
-						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+						do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
 						time_out = 1;
 						break;
 					}
 				}
 
 				pthread_mutex_unlock (qc->seedex_mut);
+
 				if(time_out == 0){
 					f1v.read_right = false;
-					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,3, extension_meta);
-					vdip = 0x0000;
-					rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (2*tid) * BATCH_LINE_LIMIT/4*64, extension_meta);
 				}
 #else
 				std::vector<union SeedExLine> read_buffer;
@@ -2907,6 +2918,14 @@ static void fpga_worker(void *data){
 				pthread_mutex_lock (qc->seedex_mut);
 				fpga_func_model(w->opt, load_buffer1, load_buffer_entry_idx1, read_buffer);
 				pthread_mutex_unlock (qc->seedex_mut);
+
+				// static bool dumped = false;
+				// if (!dumped){
+				// 	fprintf(stderr, "Dumping in.out(%d lines) out.mem(%d lines)...", load_buffer1.size(), read_buffer.size());
+				// 	dump_mem("in.mem", load_buffer1);
+				// 	dump_mem("out.mem", read_buffer);
+				// }
+				// dumped = true;
 
 				// FIXME:: Count only non-null from entry idx
 				// assert(read_buffer.size() == (load_buffer_entry_idx1.size() - 2 + (sizeof(ResultLine::results) / sizeof(ResultEntry))) / (sizeof(ResultLine::results) / sizeof(ResultEntry)) ) ;
@@ -2919,7 +2938,8 @@ static void fpga_worker(void *data){
 				// right ext
 				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),0);
 
-				vdip = 0x0001;
+				// vdip = 0x0001;
+				vdip = 2 * tid + 2;
 
 				pthread_mutex_lock (qc->seedex_mut);
 
@@ -2931,7 +2951,9 @@ static void fpga_worker(void *data){
 
 					rc = fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
 
-					if((vled & 0x0001) == 0)  {
+					if(vled == 0x10)  {
+						vdip = 0x0000;
+						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 						break;
 					}
 
@@ -2942,21 +2964,19 @@ static void fpga_worker(void *data){
 							fprintf(stderr,"Going into timeout mode\n");
 							fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
 						}
-						vdip = 0x0002;
+						vdip = 0xffffffff;
 						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-						vdip = 0x0000;
-						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+						do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
 						time_out = 1;
 						break;
 					}
 				}
 
 				pthread_mutex_unlock (qc->seedex_mut);
+
 				if(time_out == 0){
 					f1v.read_right = true;
-					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,3, extension_meta);
-					vdip = 0x0000;
-					rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (2*tid+1) * BATCH_LINE_LIMIT/4*64, extension_meta);
 				}
 #else
 				read_buffer.clear();
@@ -3162,7 +3182,7 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 	extern void kt_for_batch(int n_threads, void (*func)(void*,int,int,int), void *data, int n, int batch_size); // [QA] new kt_for for batch processing
 	worker_t w;
 	worker2_t w2;
-	queue_coll qc;
+	queue_coll qc[NUM_FPGA_THREADS];
 	mem_pestat_t pes[4];
 	double ctime, rtime;
 	int i,j,total_qual;
@@ -3216,13 +3236,17 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 			exit (1);
 		}
 
-		qc.q1 = w.queue1;
-		qc.q2 = w2.queue1;
-		qc.w = &w;
-
 		// SeedEx Mutex
-		qc.seedex_mut = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t));
-		pthread_mutex_init (qc.seedex_mut, NULL);
+		pthread_mutex_t *seedex_mut = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t));
+		pthread_mutex_init (seedex_mut, NULL);
+
+		for (int j = 0; j < NUM_FPGA_THREADS; ++j) {
+			qc[j].q1 = w.queue1;
+			qc[j].q2 = w2.queue1;
+			qc[j].w = &w;
+			qc[j].seedex_mut = seedex_mut;
+			qc[j].tid = j;
+		}
 
 
 		for (i = 0; i < opt->n_threads; ++i)
@@ -3237,7 +3261,7 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 
 		pthread_t s1, s2[NUM_FPGA_THREADS], s3;
 		pthread_create (&s1, NULL, worker1_MT, &w);
-		for (int j = 0; j < NUM_FPGA_THREADS; ++j) pthread_create (&s2[j], NULL, fpga_worker, &qc);
+		for (int j = 0; j < NUM_FPGA_THREADS; ++j) pthread_create (&s2[j], NULL, fpga_worker, &qc[j]);
 		pthread_create (&s3, NULL, worker2_MT, &w2);
 		pthread_join (s1, NULL);
 		for (int j = 0; j < NUM_FPGA_THREADS; ++j) pthread_join (s2[j], NULL);
@@ -3245,8 +3269,8 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 		queueDelete (w.queue1);
 		queueDelete (w2.queue1);
 
-		pthread_mutex_destroy (qc.seedex_mut);
-		free(qc.seedex_mut);
+		pthread_mutex_destroy (seedex_mut);
+		free(seedex_mut);
 
 
 		for (i = 0; i < opt->n_threads; ++i)
