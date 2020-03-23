@@ -37,7 +37,7 @@
 
 #define	MEM_16G		(1ULL << 34)
 #define BATCH_SIZE  1000
-#define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
+#define TIMEOUT     BATCH_SIZE*100*1000*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
 #define NUM_FPGA_THREADS	1
@@ -151,6 +151,7 @@ typedef struct {
 
 
 uint64_t total_seeds = 0;
+uint64_t fpga_exec_cnt = 0;
 
 queue *queueInit (void)
 {
@@ -1264,7 +1265,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 		else{
 			// uint32_t is_reverse = (s->rbeg >= (l_pac)) ? 1 : 0; 
 
-			int seq_id = write_buffer_entry1.size();
+			uint32_t seq_id = write_buffer_entry1.size();
 			a = kv_pushp(mem_alnreg_t, *av);
 			memset(a, 0, sizeof(mem_alnreg_t));
 			a->w = aw[0] = aw[1] = opt->w;
@@ -1278,6 +1279,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 			//*ar_index = encode_seed_data(rmax[0], s->rbeg, rmax[1], is_reverse,s->len,s->qbeg, (s->qbeg + s->len), (uint32_t)(s->rbeg - rmax[0]), (uint32_t)(s->rbeg - rmax[0] + s->len), *write_buffer + *write_buffer_index, *ar_index);
 
 			if (s->qbeg) { // left extension
+ 				*(((uint8_t*) &seq_id)+3) = fpga_exec_cnt+1;
 				uint8_t *rs, *qs;
 				int qle, tle, gtle, gscore;
 				qs = malloc(s->qbeg);
@@ -1304,6 +1306,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 			}
 
 			if (s->qbeg + s->len != l_query) { // right extension
+ 				*(((uint8_t*) &seq_id)+3) = fpga_exec_cnt+2;
 				int qle, tle, qe, re, gtle, gscore, sc0 = a->score;
 				qe = s->qbeg + s->len;
 				re = s->rbeg + s->len - rmax[0];
@@ -2502,12 +2505,13 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 
 		for (int k = 0; k < (sizeof(ResultLine::results) / sizeof(ResultEntry)); ++k) {
 			struct ResultEntry * re = &results->results[k];
-            if (re->spacing[0] == 0) { if (seen_empty_entry++ > 8) break; continue; }
-			int seq_id = re->seq_id;
-			uint32_t read_idx = extension_meta.at(re->seq_id).read_idx;
+			if (re->spacing[0] == 0) { seen_empty_entry++; continue; }
+			uint32_t seq_id = re->seq_id & ((1<<24)-1);
+			fprintf(stderr, "SEQ_ID0x%x: 0x%x 0x%x %d \t", fpga_exec_cnt, re->seq_id, seq_id, seq_id);
+			uint32_t read_idx = extension_meta.at(seq_id).read_idx;
 			// uint32_t read_id = qe->seqs[read_idx]->read_id;
-			uint32_t chain_id = extension_meta.at(re->seq_id).chain_id;
-			uint32_t seed_id = extension_meta.at(re->seq_id).seed_id;
+			uint32_t chain_id = extension_meta.at(seq_id).chain_id;
+			uint32_t seed_id = extension_meta.at(seq_id).seed_id;
 			//TODO: Fix this if condition
 			assert(read_idx < BATCH_SIZE);
 			assert(f1v->a[read_idx].fpga_entry_present == 1);
@@ -2527,13 +2531,14 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 
 						// transfer score for sc0 in loadbuf2
 						union SeedExLine * right_ext_entry;
-						if (right_ext_entry = f1v->load_buffer_entry_idx2->at(re->seq_id)) {
+						if (right_ext_entry = f1v->load_buffer_entry_idx2->at(seq_id)) {
 							right_ext_entry->ty1.params.init_score = re->lscore;
 						}
 					}
 				// }
 			// }
 		}
+		if (seen_empty_entry > 0) break;
 
 	}
 
@@ -2552,6 +2557,7 @@ void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,qu
 		size_t read_buffer_size = total_lines * 64;
 
 #ifdef ENABLE_FPGA
+		fprintf(stderr, "Reading from FPGA [addr:0x%x, len:%d]\n", channel * MEM_16G + addr, read_buffer_size);
 		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G + addr);
 
 		get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta, alnregs);
@@ -2882,10 +2888,15 @@ static void fpga_worker(void *data){
 				// vdip = 0x0001;
 				vdip = 2 * tid + 1;
 
+				fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
+				fprintf(stderr, "--> L:st FPGA Status 0x%x\n", vled);
+				fpga_exec_cnt++;
+
 				pthread_mutex_lock (qc->seedex_mut);
 
 				// PCI Poke can be used for writing small amounts of data on the OCL bus
 				rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+				fprintf(stderr, "Kick Off FPGA\n");
 
 				clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
 				while(1) {
@@ -2899,12 +2910,14 @@ static void fpga_worker(void *data){
 					}
 
 					clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
-					timediff = (end.tv_nsec - start.tv_nsec) * 1000000000 + (end.tv_sec - start.tv_sec);
+					timediff = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
 					if(timediff > TIMEOUT){
 						if(bwa_verbose >= 10){
 							fprintf(stderr,"Going into timeout mode\n");
 							fprintf(stderr,"Starting : %ld\n",qe->starting_read_id);
 						}
+						fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
+						fprintf(stderr, "TO:::FPGA Status 0x%x\n", vled);
 						vdip = 0xffffffff;
 						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 						do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
@@ -2914,6 +2927,7 @@ static void fpga_worker(void *data){
 				}
 
 				pthread_mutex_unlock (qc->seedex_mut);
+				fprintf(stderr, "Return from FPGA. Timeout:%d Tdiff:%llu\n", time_out, timediff);
 
 				if(time_out == 0){
 					f1v.read_right = false;
@@ -2943,12 +2957,16 @@ static void fpga_worker(void *data){
 
 #ifdef ENABLE_FPGA
 				// right ext
-				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),0);
+				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(2*tid+1));
 
 				// vdip = 0x0001;
 				vdip = 2 * tid + 2;
 
 				pthread_mutex_lock (qc->seedex_mut);
+
+				fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
+				fprintf(stderr, "--> R:st FPGA Status 0x%x\n", vled);
+				fpga_exec_cnt++;
 
 				// PCI Poke can be used for writing small amounts of data on the OCL bus
 				rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
@@ -2965,12 +2983,14 @@ static void fpga_worker(void *data){
 					}
 
 					clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
-					timediff = (end.tv_nsec - start.tv_nsec) * 1000000000 + (end.tv_sec - start.tv_sec);
+					timediff = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
 					if(timediff > TIMEOUT){
 						if(bwa_verbose >= 10){
 							fprintf(stderr,"Going into timeout mode\n");
 							fprintf(stderr,"Starting : %ld\n",qe->starting_read_id);
 						}
+						fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
+						fprintf(stderr, "TO:::FPGA Status 0x%x\n", vled);
 						vdip = 0xffffffff;
 						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 						do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
@@ -2980,6 +3000,7 @@ static void fpga_worker(void *data){
 				}
 
 				pthread_mutex_unlock (qc->seedex_mut);
+				fprintf(stderr, "Return from FPGA. Timeout:%d Tdiff:%llu\n", time_out, timediff);
 
 				if(time_out == 0){
 					f1v.read_right = true;
