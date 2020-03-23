@@ -36,7 +36,6 @@
 
 #define	MEM_16G		(1ULL << 34)
 #define BATCH_SIZE  1000
-#define BATCH_LINE_LIMIT	16384
 #define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
@@ -1208,7 +1207,7 @@ struct SeedExPackageGen
 };
 
 
-void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av, int64_t rmax0, int64_t rmax1, fpga_data_out_t* fpga_result, std::vector<union SeedExLine>& write_buffer1, std::vector<union SeedExLine*>& write_buffer_entry1, std::vector<union SeedExLine>& write_buffer2, std::vector<union SeedExLine*>& write_buffer_entry2, std::vector<struct extension_meta_t>& extension_meta)
+void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av, int64_t rmax0, int64_t rmax1, fpga_data_out_t* fpga_result, LoadBufferTy& write_buffer1, LoadBufferPtrTy& write_buffer_entry1, LoadBufferTy& write_buffer2, LoadBufferPtrTy& write_buffer_entry2, std::vector<struct extension_meta_t>& extension_meta)
 {
 	int i, k, rid, aw[2]; // aw: actual bandwidth used in extension
 	int64_t l_pac = bns->l_pac, rmax[2], tmp;
@@ -1403,7 +1402,7 @@ void postprocess_alnreg (const mem_opt_t *opt, int l_query, const mem_chain_t *c
 }
 
 
-void fpga_func_model(const mem_opt_t *opt, std::vector<union SeedExLine>& load_buf, std::vector<union SeedExLine*>& idx, std::vector<union SeedExLine>& results)
+void fpga_func_model(const mem_opt_t *opt, LoadBufferTy& load_buf, LoadBufferPtrTy& idx, LoadBufferTy& results)
 {
 	int i,j;
 	char buf[168];
@@ -1472,7 +1471,7 @@ void fpga_func_model(const mem_opt_t *opt, std::vector<union SeedExLine>& load_b
 	}
 }
 
-void dump_mem(const char *fname, const std::vector<union SeedExLine>& buf)
+void dump_mem(const char *fname, const LoadBufferTy& buf)
 {
 	FILE *fp = fopen(fname, "w");
 	assert(fname);
@@ -2114,7 +2113,7 @@ void seeding(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const 
 }
 
 
-void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_seq, char *seq, mem_chain_v * chn, mem_alnreg_v_v * alnregs, fpga_data_out_t *data_out, std::vector<union SeedExLine>& write_buffer1, std::vector<union SeedExLine*>& write_buffer_entry_idx1, std::vector<union SeedExLine>& write_buffer2, std::vector<union SeedExLine*>& write_buffer_entry_idx2, std::vector<struct extension_meta_t>& extension_meta, int run_fpga){
+void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_seq, char *seq, mem_chain_v * chn, mem_alnreg_v_v * alnregs, fpga_data_out_t *data_out, LoadBufferTy& write_buffer1, LoadBufferPtrTy& write_buffer_entry_idx1, LoadBufferTy& write_buffer2, LoadBufferPtrTy& write_buffer_entry_idx2, std::vector<struct extension_meta_t>& extension_meta, int run_fpga){
 	
 	// mem_alnreg_v * regs = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
 	// memset(regs,0,sizeof(mem_alnreg_v));
@@ -2796,10 +2795,10 @@ static void fpga_worker(void *data){
 	queue_t *qe;
 	int last_entry = 0;
 	int rc = 0;
-	std::vector<union SeedExLine> load_buffer1;
-	std::vector<union SeedExLine*> load_buffer_entry_idx1;
-	std::vector<union SeedExLine> load_buffer2;
-	std::vector<union SeedExLine*> load_buffer_entry_idx2;
+	LoadBufferTy load_buffer1;
+	LoadBufferPtrTy load_buffer_entry_idx1;
+	LoadBufferTy load_buffer2;
+	LoadBufferPtrTy load_buffer_entry_idx2;
 	std::vector<struct extension_meta_t> extension_meta;
 	int time_out = 0;
 	struct timespec start,end;
@@ -2843,15 +2842,19 @@ static void fpga_worker(void *data){
 			extension_meta.push_back({0, 0, 0});
 
 			mem_alnreg_v_v * alnregs = (mem_alnreg_v_v *)calloc(qe->num, sizeof(mem_alnreg_v_v)); // read->chain->reg
-			// mem_alnreg_v_v * alnregs_vv = (mem_alnreg_v_v *)calloc(qe->num, sizeof(mem_alnreg_v_v)); // read->chain->reg
+			#ifdef VERIFICATION
+			mem_alnreg_v_v * alnregs_vv = (mem_alnreg_v_v *)calloc(qe->num, sizeof(mem_alnreg_v_v)); // read->chain->reg
+			#endif
 
 			for(i = 0;i<qe->num;i++){
 				f1.fpga_entry_present = 0;
 				extension_meta.back().read_idx = i;
 				kv_init(alnregs[i]);
 				seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 1);
-				// kv_init(alnregs_vv[i]);
-				// seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs_vv[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 2);
+				#ifdef VERIFICATION
+				kv_init(alnregs_vv[i]);
+				seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs_vv[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 2);
+				#endif
 
 				f1v.a[i].fpga_entry_present = f1.fpga_entry_present;
 				if(f1.fpga_entry_present){
@@ -2913,7 +2916,7 @@ static void fpga_worker(void *data){
 					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (2*tid) * BATCH_LINE_LIMIT/4*64, extension_meta);
 				}
 #else
-				std::vector<union SeedExLine> read_buffer;
+				LoadBufferTy read_buffer;
 				f1v.read_right = false;
 				pthread_mutex_lock (qc->seedex_mut);
 				fpga_func_model(w->opt, load_buffer1, load_buffer_entry_idx1, read_buffer);
@@ -2990,15 +2993,17 @@ static void fpga_worker(void *data){
 			}
 
 			// model validation
-			// for(i = 0;i<qe->num;i++){
-			// 	for(int j = 0;j<alnregs[i].n;j++){
-			// 		mem_alnreg_v * av = &alnregs[i].a[j];
-			// 		for (int k = 0; k < av->n; k++) {
-			// 			mem_alnreg_t * a = &av->a[k];
-			// 			assert(a->score == alnregs_vv[i].a[j].a[k].score);
-			// 		}
-			// 	}
-			// }
+#ifdef VERIFICATION
+			for(i = 0;i<qe->num;i++){
+				for(int j = 0;j<alnregs[i].n;j++){
+					mem_alnreg_v * av = &alnregs[i].a[j];
+					for (int k = 0; k < av->n; k++) {
+						mem_alnreg_t * a = &av->a[k];
+						assert(a->score == alnregs_vv[i].a[j].a[k].score);
+					}
+				}
+			}
+#endif
 
 			for(i = 0;i<qe->num;i++){
 				qe->regs[i] = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
