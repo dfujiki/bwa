@@ -1464,6 +1464,7 @@ void fpga_func_model(const mem_opt_t *opt, LoadBufferTy& load_buf, LoadBufferPtr
 		re.lscore = lscore;
 		re.seq_id = seq_id;
 		re.tle = tle;
+		re.spacing[0] = 1;
 		free(query);
 		free(target);
 		// test exception
@@ -2479,6 +2480,7 @@ void rerun_right_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_
 
 void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, queue_t *qe,fpga_data_out_v * f1v, std::vector<struct extension_meta_t>& extension_meta, mem_alnreg_v_v *alnregs){
 	int i = 0;
+	int seen_empty_entry = 0;
 	for(i=0;i<total_lines;i++){
 		if(bwa_verbose >= 15){
 			int k1=0,i1=0;
@@ -2497,8 +2499,9 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 		// memcpy(&read_id,read_buffer + i*64 + 1,4);
 		// read_id = read_id - qe->starting_read_id;
 
-		for (int k = 0; k < results->preamble[0]; ++k) {
+		for (int k = 0; k < (sizeof(ResultLine::results) / sizeof(ResultEntry)); ++k) {
 			struct ResultEntry * re = &results->results[k];
+            if (re->spacing[0] == 0) { if (seen_empty_entry++ > 8) break; continue; }
 			int seq_id = re->seq_id;
 			uint32_t read_idx = extension_meta.at(re->seq_id).read_idx;
 			// uint32_t read_id = qe->seqs[read_idx]->read_id;

@@ -72,7 +72,7 @@ struct extension_meta_t
 
 #ifndef NO_BWA
 #include <array>
-#include <stack>
+#include <memory>
 #include <vector>
 
 #include "bwt.h"
@@ -87,25 +87,25 @@ typedef struct {
 } fpga_data_out_t;
 
 
-template <typename T, size_t N>
+template <typename T>
 struct arraystack
 {
-    arraystack() : n(0) {};
-    void push_back(T&& item) {assert(n < BATCH_LINE_LIMIT); a[n++] = item;}
+    arraystack() : n(0), a(new T[BATCH_LINE_LIMIT]) {};
+    void push_back(T&& item) {assert(n < N); a[n++] = item;}
     T& back() {return (n > 0)? a[n-1] : a[0];}
     T& at(size_t i) {assert(i >= 0 && i < n && "range error"); return a[i];}
     T* begin() {return &a[0];}
     T* end() {return &a[n];}
     size_t size() {return n;}
-    T* data() {return a.data();}
+    T* data() {return a.get();}
     void clear() {n = 0;}
-    void reserve(size_t sz) {assert(sz <= N && "size error");}
-    std::array<T,N> a;
-    size_t n;
+    void reserve(size_t sz) {assert(n == 0 && "N>0 when trying to reserve"); a.reset(new T[BATCH_LINE_LIMIT]);}
+    std::unique_ptr<T[]> a;
+    size_t n, N=BATCH_LINE_LIMIT;
 };
 
-typedef arraystack<union SeedExLine, BATCH_LINE_LIMIT> LoadBufferTy;
-typedef arraystack<union SeedExLine*, BATCH_LINE_LIMIT> LoadBufferPtrTy;
+typedef arraystack<union SeedExLine> LoadBufferTy;
+typedef arraystack<union SeedExLine*> LoadBufferPtrTy;
 // typedef std::vector<union SeedExLine> LoadBufferTy;
 // typedef std::vector<union SeedExLine*> LoadBufferPtrTy;
 
