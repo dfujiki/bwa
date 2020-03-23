@@ -92,6 +92,7 @@ struct arraystack
 {
     arraystack() : n(0), a(new T[BATCH_LINE_LIMIT]) {};
     void push_back(T&& item) {assert(n < N); a[n++] = item;}
+    void push_back(T& item) {assert(n < N); a[n++] = item;}
     T& back() {return (n > 0)? a[n-1] : a[0];}
     T& at(size_t i) {assert(i >= 0 && i < n && "range error"); return a[i];}
     T* begin() {return &a[0];}
@@ -106,6 +107,7 @@ struct arraystack
 
 typedef arraystack<union SeedExLine> LoadBufferTy;
 typedef arraystack<union SeedExLine*> LoadBufferPtrTy;
+typedef arraystack<struct extension_meta_t> VExtMetaTy;
 // typedef std::vector<union SeedExLine> LoadBufferTy;
 // typedef std::vector<union SeedExLine*> LoadBufferPtrTy;
 
@@ -117,6 +119,7 @@ typedef struct {
 	LoadBufferPtrTy* load_buffer_entry_idx1;
 	LoadBufferTy* load_buffer2;
 	LoadBufferPtrTy* load_buffer_entry_idx2;
-	std::vector<struct extension_meta_t>* extension_meta;
-} fpga_data_out_v;
+    size_t load_buffer_valid_indices[2];
+	VExtMetaTy* extension_meta;
+} fpga_data_tx;
 #endif

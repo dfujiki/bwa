@@ -35,6 +35,8 @@
 #  include "malloc_wrap.h"
 #endif
 
+#define VRIFICATION
+
 #define	MEM_16G		(1ULL << 34)
 #define BATCH_SIZE  1000
 #define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
@@ -1208,7 +1210,7 @@ struct SeedExPackageGen
 };
 
 
-void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av, int64_t rmax0, int64_t rmax1, fpga_data_out_t* fpga_result, LoadBufferTy& write_buffer1, LoadBufferPtrTy& write_buffer_entry1, LoadBufferTy& write_buffer2, LoadBufferPtrTy& write_buffer_entry2, std::vector<struct extension_meta_t>& extension_meta)
+void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av, int64_t rmax0, int64_t rmax1, fpga_data_tx *f1v, fpga_data_out_t* fpga_result)
 {
 	int i, k, rid, aw[2]; // aw: actual bandwidth used in extension
 	int64_t l_pac = bns->l_pac, rmax[2], tmp;
@@ -1216,6 +1218,11 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 	uint8_t *rseq = 0;
 	uint64_t *srt;
 	SeedExPackageGen gen;
+	auto& write_buffer_entry1 = *f1v->load_buffer_entry_idx1;
+	auto& write_buffer1 = *f1v->load_buffer1;
+	auto& write_buffer_entry2 = *f1v->load_buffer_entry_idx2;
+	auto& write_buffer2 = *f1v->load_buffer2;
+	auto& extension_meta = *f1v->extension_meta;
 
 	if (c->n == 0) return;
 		// FPGA : Write read data into write_buffer
@@ -1297,6 +1304,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 				// ksw_extend2(s->qbeg, qs, tmp, rs, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[0], opt->pen_clip5, opt->zdrop, s->len * opt->a, &qle, &tle, &gtle, &gscore, &max_off[0]);
 				// if (bwa_verbose >= 4) { printf("*** Left extension: prev_score=%d; score=%d; bandwidth=%d; max_off_diagonal_dist=%d\n", prev, a->score, aw[0], max_off[0]); fflush(stdout); }
 				fpga_result->fpga_entry_present = 1;
+				f1v->load_buffer_valid_indices[0]++;
 				free(qs); free(rs);
 			} else {
 				a->score = a->truesc = s->len * opt->a, a->qb = 0, a->rb = s->rbeg;
@@ -1319,6 +1327,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 				}
 				//ksw_extend2(l_query - qe, query + qe, rmax[1] - rmax[0] - re, rseq + re, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, aw[1], opt->pen_clip3, opt->zdrop, sc0, &qle, &tle, &gtle, &gscore, &max_off[1]);
 				// if (bwa_verbose >= 4) { printf("*** Right extension: prev_score=%d; score=%d; bandwidth=%d; max_off_diagonal_dist=%d\n", prev, a->score, aw[1], max_off[1]); fflush(stdout); }
+				f1v->load_buffer_valid_indices[1]++;
 				fpga_result->fpga_entry_present = 1;
 			} else {
 				a->qe = l_query, a->re = s->rbeg + s->len;
@@ -2115,7 +2124,7 @@ void seeding(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const 
 }
 
 
-void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_seq, char *seq, mem_chain_v * chn, mem_alnreg_v_v * alnregs, fpga_data_out_t *data_out, LoadBufferTy& write_buffer1, LoadBufferPtrTy& write_buffer_entry_idx1, LoadBufferTy& write_buffer2, LoadBufferPtrTy& write_buffer_entry_idx2, std::vector<struct extension_meta_t>& extension_meta, int run_fpga){
+void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, const uint8_t *pac, int l_seq, char *seq, mem_chain_v * chn, mem_alnreg_v_v * alnregs, fpga_data_tx *f1v, fpga_data_out_t *data_out, int run_fpga){
 	
 	// mem_alnreg_v * regs = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
 	// memset(regs,0,sizeof(mem_alnreg_v));
@@ -2150,8 +2159,8 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
 				mem_chain2aln_cpu(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
 			}
   		  	else{
-  	 			extension_meta.back().chain_id = i;
-  	 			mem_chain2aln_to_fpga(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1, data_out, write_buffer1, write_buffer_entry_idx1, write_buffer2, write_buffer_entry_idx2, extension_meta);
+  	 			f1v->extension_meta->back().chain_id = i;
+  	 			mem_chain2aln_to_fpga(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1, f1v, data_out);
   		  	}
 		}
 		//free(chn->a[i].seeds);
@@ -2479,7 +2488,7 @@ void rerun_right_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_
 	} else a->qe = l_query, a->re = s->rbeg + s->len;
 }
 
-void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, queue_t *qe,fpga_data_out_v * f1v, std::vector<struct extension_meta_t>& extension_meta, mem_alnreg_v_v *alnregs){
+void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, queue_t *qe,fpga_data_tx * f1v, VExtMetaTy& extension_meta, mem_alnreg_v_v *alnregs){
 	int i = 0;
 	int seen_empty_entry = 0;
 	for(i=0;i<total_lines;i++){
@@ -2540,7 +2549,7 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 }
 
 
-void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,queue_t* qe, fpga_data_out_v * f1v, int channel, uint64_t addr, std::vector<struct extension_meta_t>& extension_meta, mem_alnreg_v_v *alnregs){
+void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,queue_t* qe, fpga_data_tx * f1v, int channel, uint64_t addr, VExtMetaTy& extension_meta, mem_alnreg_v_v *alnregs){
 	int rc = 0;
 	 
 	if(f1v->n != 0){   
@@ -2548,7 +2557,7 @@ void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,qu
 			printf("Num entries in read_from_fpga : %zd\n",f1v->n);
 		}
 
-		size_t total_lines = ((f1v->read_right? f1v->load_buffer_entry_idx2->size() : f1v->load_buffer_entry_idx1->size()) - 2 + (sizeof(ResultLine::results) / sizeof(ResultEntry))) / (sizeof(ResultLine::results) / sizeof(ResultEntry)) ;
+		size_t total_lines = ((f1v->load_buffer_valid_indices[f1v->read_right]) - 2 + (sizeof(ResultLine::results) / sizeof(ResultEntry))) / (sizeof(ResultLine::results) / sizeof(ResultEntry)) ;
 		size_t read_buffer_size = total_lines * 64;
 
 #ifdef ENABLE_FPGA
@@ -2803,13 +2812,13 @@ static void fpga_worker(void *data){
 	LoadBufferPtrTy load_buffer_entry_idx1;
 	LoadBufferTy load_buffer2;
 	LoadBufferPtrTy load_buffer_entry_idx2;
-	std::vector<struct extension_meta_t> extension_meta;
+	VExtMetaTy extension_meta;
 	int time_out = 0;
 	struct timespec start,end;
 	uint64_t timediff;
 
 
-	fpga_data_out_v f1v;
+	fpga_data_tx f1v;
 	fpga_data_out_t f1;
 
 	load_buffer1.reserve(BATCH_LINE_LIMIT);
@@ -2819,6 +2828,9 @@ static void fpga_worker(void *data){
 	f1v.load_buffer_entry_idx1 = &load_buffer_entry_idx1;
 	f1v.load_buffer2 = &load_buffer2;
 	f1v.load_buffer_entry_idx2 = &load_buffer_entry_idx2;
+	f1v.load_buffer_valid_indices[0] = 0;
+	f1v.load_buffer_valid_indices[1] = 0;
+	f1v.extension_meta = &extension_meta;
 
 	while(1){
 		pthread_mutex_lock (q1->mut);
@@ -2854,10 +2866,10 @@ static void fpga_worker(void *data){
 				f1.fpga_entry_present = 0;
 				extension_meta.back().read_idx = i;
 				kv_init(alnregs[i]);
-				seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 1);
+				seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1v, &f1, 1);
 				#ifdef VERIFICATION
 				kv_init(alnregs_vv[i]);
-				seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs_vv[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 2);
+				seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs_vv[i], &f1v, &f1, 2);
 				#endif
 
 				f1v.a[i].fpga_entry_present = f1.fpga_entry_present;
@@ -3015,7 +3027,7 @@ static void fpga_worker(void *data){
 
 				// time_out = 1;
 				if(time_out == 1){
-					seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1, load_buffer1, load_buffer_entry_idx1, load_buffer2, load_buffer_entry_idx2, extension_meta, 0);
+					seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1v, &f1, 0);
 					if (alnregs[i].n > 0) {
 						kv_copy(mem_alnreg_t, *qe->regs[i], alnregs[i].a[0]);
 						kv_destroy(alnregs[i].a[0]);
@@ -3056,6 +3068,8 @@ static void fpga_worker(void *data){
 			load_buffer_entry_idx1.clear();
 			load_buffer_entry_idx2.clear();
 			extension_meta.clear();
+			f1v.load_buffer_valid_indices[0] = 0;
+			f1v.load_buffer_valid_indices[1] = 0;
 
 		}
 
