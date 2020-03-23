@@ -3267,6 +3267,10 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 
 		// Create producer and consumer thread
 		
+#ifdef ENABLE_FPGA
+        fprintf(stderr, "COMPILED WITH FPGA ENABLED\n");
+#endif
+
 
 		pthread_t s1, s2[NUM_FPGA_THREADS], s3;
 		pthread_create (&s1, NULL, worker1_MT, &w);

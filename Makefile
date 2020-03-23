@@ -16,10 +16,11 @@ PROG=		bwa
 INCLUDES = -I$(SDK_DIR)/userspace/include
 LIBS=		-lm -lz -lpthread
 
-ifdef ${SDK_DIR}
+ifdef FPGA
 	LIBS += -lfpga_mgmt
 	AOBJS += dma_common.o
 	CXXFLAGS += -DENABLE_FPGA
+	CFLAGS += -DENABLE_FPGA
 endif
 
 SUBDIRS=	.
