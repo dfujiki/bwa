@@ -19,6 +19,7 @@
 #include "utils.h"
 #ifdef ENABLE_FPGA
 #include <utils/lcd.h>
+#include "dma_common.h"
 #endif
 #include <pthread.h>
 #include <stdio.h>
@@ -2539,7 +2540,7 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 }
 
 
-void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,queue_t* qe, fpga_data_out_v * f1v, int channel, uint64_t addr, std::vector<struct extension_meta_t>& extension_meta){
+void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,queue_t* qe, fpga_data_out_v * f1v, int channel, uint64_t addr, std::vector<struct extension_meta_t>& extension_meta, mem_alnreg_v_v *alnregs){
 	int rc = 0;
 	 
 	if(f1v->n != 0){   
@@ -2553,7 +2554,7 @@ void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,qu
 #ifdef ENABLE_FPGA
 		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G + addr);
 
-		get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta);
+		get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta, alnregs);
 
 		if(read_buffer) {
 			free(read_buffer);
@@ -2902,7 +2903,7 @@ static void fpga_worker(void *data){
 					if(timediff > TIMEOUT){
 						if(bwa_verbose >= 10){
 							fprintf(stderr,"Going into timeout mode\n");
-							fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
+							fprintf(stderr,"Starting : %ld\n",qe->starting_read_id);
 						}
 						vdip = 0xffffffff;
 						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
@@ -2916,7 +2917,7 @@ static void fpga_worker(void *data){
 
 				if(time_out == 0){
 					f1v.read_right = false;
-					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (2*tid) * BATCH_LINE_LIMIT/4*64, extension_meta);
+					read_scores_from_fpga(w, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (2*tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
 #else
 				LoadBufferTy read_buffer;
@@ -2968,7 +2969,7 @@ static void fpga_worker(void *data){
 					if(timediff > TIMEOUT){
 						if(bwa_verbose >= 10){
 							fprintf(stderr,"Going into timeout mode\n");
-							fprintf(stderr,"Starting : %ld, Size : %zd\n",qe->starting_read_id, load_buffer_size);
+							fprintf(stderr,"Starting : %ld\n",qe->starting_read_id);
 						}
 						vdip = 0xffffffff;
 						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
@@ -2982,7 +2983,7 @@ static void fpga_worker(void *data){
 
 				if(time_out == 0){
 					f1v.read_right = true;
-					read_scores_from_fpga(w->opt, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (2*tid+1) * BATCH_LINE_LIMIT/4*64, extension_meta);
+					read_scores_from_fpga(w, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (2*tid+1) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
 #else
 				read_buffer.clear();

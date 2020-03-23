@@ -14,8 +14,14 @@ AOBJS=		bwashm.o bwase.o bwaseqio.o bwtgap.o bwtaln.o bamlite.o \
 PROG=		bwa
 #INCLUDES=	
 INCLUDES = -I$(SDK_DIR)/userspace/include
-LIBS=		-lm -lz -lpthread -lfpga_mgmt
 LIBS=		-lm -lz -lpthread
+
+ifdef ${SDK_DIR}
+	LIBS += -lfpga_mgmt
+	AOBJS += dma_common.o
+	CXXFLAGS += -DENABLE_FPGA
+endif
+
 SUBDIRS=	.
 
 ifeq ($(shell uname -s),Linux)
@@ -26,6 +32,9 @@ endif
 
 .c.o:
 		$(CC) -c $(CFLAGS) $(DFLAGS) $(INCLUDES) $< -o $@
+
+.cc.o:
+		$(CXX) -c $(CXXFLAGS) $(DFLAGS) $(INCLUDES) $< -o $@
 
 all:$(PROG)
 
@@ -77,6 +86,7 @@ bwtsw2_core.o: khash.h ksort.h
 bwtsw2_main.o: bwt.h bwtsw2.h bntseq.h bwt_lite.h utils.h bwa.h
 bwtsw2_pair.o: utils.h bwt.h bntseq.h bwtsw2.h bwt_lite.h kstring.h
 bwtsw2_pair.o: malloc_wrap.h ksw.h
+dma_common.o: dma_common.h
 example.o: bwamem.h bwt.h bntseq.h bwa.h kseq.h malloc_wrap.h
 fastmap.o: bwa.h bntseq.h bwt.h bwamem.h kvec.h malloc_wrap.h utils.h kseq.h
 is.o: malloc_wrap.h
