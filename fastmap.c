@@ -71,42 +71,6 @@ static uint16_t pci_device_id = 0xF000;
 
 
 #ifdef ENABLE_FPGA
-static int
-check_slot_config(int slot_id)
-{
-    int rc;
-    struct fpga_mgmt_image_info info = {0};
-
-    // get local image description, contains status, vendor id, and device id
-    rc = fpga_mgmt_describe_local_image(slot_id, &info, 0);
-    fail_on(rc, out, "Unable to get local image information. Are you running as root?");
-
-    // check to see if the slot is ready 
-    if (info.status != FPGA_STATUS_LOADED) {
-        rc = 1;
-        fail_on(rc, out, "Slot %d is not ready", slot_id);
-    }
-
-    // confirm that the AFI that we expect is in fact loaded
-    if (info.spec.map[FPGA_APP_PF].vendor_id != pci_vendor_id ||
-        info.spec.map[FPGA_APP_PF].device_id != pci_device_id) {
-        rc = 1;
-        printf("The slot appears loaded, but the pci vendor or device ID doesn't "
-               "match the expected values. You may need to rescan the fpga with \n"
-               "fpga-describe-local-image -S %i -R\n"
-               "Note that rescanning can change which device file in /dev/ a FPGA will map to.\n"
-               "To remove and re-add your edma driver and reset the device file mappings, run\n"
-               "`sudo rmmod edma-drv && sudo insmod <aws-fpga>/sdk/linux_kernel_drivers/edma/edma-drv.ko`\n",
-               slot_id);
-        fail_on(rc, out, "The PCI vendor id and device of the loaded image are "
-                         "not the expected values.");
-    }
-
-out:
-    return rc;
-}
-
-
 // Buffer Size must be number of elements in buffer and not num of bytes.
 // Buffer size = num_bytes / sizeof(uint32_t)
 

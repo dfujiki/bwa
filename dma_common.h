@@ -26,6 +26,9 @@
 #include "fpga_dma.h"
 #include "utils/lcd.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 /**
  * Fills the buffer with bytes read from urandom.
  */
@@ -69,3 +72,7 @@ typedef struct {
     int read_fd;
     pci_bar_handle_t pci_bar_handle;
 } fpga_pci_data_t;
+
+#ifdef __cplusplus
+}
+#endif

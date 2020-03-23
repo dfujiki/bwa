@@ -25,8 +25,10 @@
 #include <sys/types.h>
 
 #include "dma_common.h"
-#include "user_defines.h"
+//#include "user_defines.h"
 
+#define AMZ_PCI_VENDOR_ID   0x1D0F
+#define PCI_DEVICE_ID       0xF000
 
 int fill_buffer_urandom(uint8_t *buf, size_t size)
 {

@@ -145,13 +145,13 @@ typedef struct {
 #ifndef ENABLE_FPGA
 typedef int pci_bar_handle_t;
 // typedef int fpga_pci_conn;
-#endif
 
 typedef struct {
     int write_fd;
     int read_fd;
     pci_bar_handle_t pci_bar_handle;
 } fpga_pci_data_t;
+#endif
 
 #ifdef __cplusplus
 extern "C" {
