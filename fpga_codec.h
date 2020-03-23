@@ -2,7 +2,7 @@
 
 #define PACKED __attribute__((__packed__))
 
-#define BATCH_LINE_LIMIT	16384*2
+#define BATCH_LINE_LIMIT	16384
 
 #define PACKET_MIDDLE       0u
 #define PACKET_START        1u
@@ -71,14 +71,13 @@ struct extension_meta_t
 
 
 #ifndef NO_BWA
-#include <array>
-#include <memory>
 #include <vector>
 
 #include "bwt.h"
 #include "bntseq.h"
 #include "bwa.h"
 #include "bwamem.h"
+
 typedef struct {
         // TODO add alignment entries
         uint8_t score;
@@ -91,6 +90,7 @@ template <typename T>
 struct arraystack
 {
     arraystack() : n(0), a(new T[BATCH_LINE_LIMIT]) {};
+    ~arraystack() { if(a) free(a); }
     void push_back(T&& item) {assert(n < N); a[n++] = item;}
     void push_back(T& item) {assert(n < N); a[n++] = item;}
     T& back() {return (n > 0)? a[n-1] : a[0];}
@@ -98,10 +98,10 @@ struct arraystack
     T* begin() {return &a[0];}
     T* end() {return &a[n];}
     size_t size() {return n;}
-    T* data() {return a.get();}
+    T* data() {return a;}
     void clear() {n = 0;}
-    void reserve(size_t sz) {assert(n == 0 && "N>0 when trying to reserve"); a.reset(new T[BATCH_LINE_LIMIT]);}
-    std::unique_ptr<T[]> a;
+    void reserve(size_t sz) {if(a) free(a); assert(n == 0 && "N>0 when trying to reserve"); a = new T[BATCH_LINE_LIMIT];}
+    T* a;
     size_t n, N=BATCH_LINE_LIMIT;
 };
 

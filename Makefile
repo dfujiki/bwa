@@ -13,7 +13,7 @@ AOBJS=		bwashm.o bwase.o bwaseqio.o bwtgap.o bwtaln.o bamlite.o \
 			bwtsw2_chain.o fastmap.o bwtsw2_pair.o
 PROG=		bwa
 #INCLUDES=	
-INCLUDES = -I$(SDK_DIR)/userspace/include
+INCLUDES = -I${SDK_DIR}/userspace/include
 LIBS=		-lm -lz -lpthread
 
 ifdef FPGA
