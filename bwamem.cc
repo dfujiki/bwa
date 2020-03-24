@@ -2622,7 +2622,7 @@ void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,qu
 			printf("Num entries in read_from_fpga : %zd\n",f1v->n);
 		}
 
-		size_t total_lines = ((f1v->load_buffer_valid_indices[f1v->read_right]) - 2 + (sizeof(ResultLine::results) / sizeof(ResultEntry))) / (sizeof(ResultLine::results) / sizeof(ResultEntry)) ;
+		size_t total_lines = ((f1v->load_buffer_valid_indices[f1v->read_right]) - 1 + (sizeof(ResultLine::results) / sizeof(ResultEntry))) / (sizeof(ResultLine::results) / sizeof(ResultEntry));
 		size_t read_buffer_size = total_lines * 64;
 
 #ifdef ENABLE_FPGA
@@ -2630,6 +2630,15 @@ void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,qu
 		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G + addr);
 
 		get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta, alnregs);
+
+		static int dump_timer = 1;
+		if (dump_timer == 0){
+			fprintf(stderr, "\nDumping...\n\n");
+			FILE *fp = fopen("out_1r_fpga.dat", "w");
+			fwrite(read_buffer, sizeof(union SeedExLine), total_lines, fp);
+			fclose(fp);
+		}
+		dump_timer--;
 
 		if(read_buffer) {
 			free(read_buffer);
@@ -3078,6 +3087,8 @@ static void fpga_worker(void *data){
 					f1v.read_right = true;
 					read_scores_from_fpga(w, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (2*tid+1) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
+
+
 #else
 				read_buffer.clear();
 				f1v.read_right = true;
