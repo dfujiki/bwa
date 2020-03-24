@@ -94,7 +94,8 @@ struct arraystack
     void push_back(T&& item) {assert(n < N); a[n++] = item;}
     void push_back(T& item) {assert(n < N); a[n++] = item;}
     T& back() {return (n > 0)? a[n-1] : a[0];}
-    T& at(size_t i) {assert(i >= 0 && i < n && "range error"); return a[i];}
+    T& at(size_t i) {assert(i < n && "range error"); return a[i];}
+    T& operator[](size_t i) {return a[i];}
     T* begin() {return &a[0];}
     T* end() {return &a[n];}
     size_t size() {return n;}

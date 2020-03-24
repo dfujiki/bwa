@@ -1099,6 +1099,7 @@ struct SeedExPackageGen
 			query_ptr += params.qlen;
 			padding = 0;
 			has_next = false;
+			if (72 - params.qlen - padding == 0) has_next = true;
 		}
 		else if (params.qlen < 72) /* |query------|padding---| */
 		{
@@ -1126,6 +1127,7 @@ struct SeedExPackageGen
 			memcpy(payload_buf, target, params.tlen);
 			memset(payload_buf + params.tlen, C_NULL, 72 - params.tlen);
 			target_ptr += params.tlen;
+			if (72 - params.tlen == 0) has_next = true;
 		}
 		else /* |target-------------------|| */
 		{
@@ -1159,6 +1161,7 @@ struct SeedExPackageGen
 			query_ptr += qlen;
 			padding = 0;
 			has_next = false;
+			if (84 - qlen - padding == 0) has_next = true;
 		}
 		else if (qlen < 84) /* |query------|padding---| */
 		{
@@ -1188,6 +1191,7 @@ struct SeedExPackageGen
 			memcpy(buf_target_ptr, target_ptr, tlen);
 			memset(buf_target_ptr + tlen, C_NULL, 84 - tlen);
 			target_ptr += tlen;
+			if (84 - tlen == 0) has_next = true;
 		}
 		else /* |target-------------------|| */
 		{
@@ -1483,6 +1487,62 @@ void fpga_func_model(const mem_opt_t *opt, LoadBufferTy& load_buf, LoadBufferPtr
 		// test exception
 		re.exception = 0;
 	}
+}
+
+void decode_line(const mem_opt_t *opt, SeedExLine *p)
+{
+	int i,j;
+	char buf[168];
+		assert(p);
+		int num_lines = 1;
+		int qlen = p->ty1.params.qlen;
+		int tlen = p->ty1.params.tlen;
+		int w = p->ty1.params.w;
+		int init_score = p->ty1.params.init_score;
+		int seq_id = p->ty1.params.seq_id;
+		char *query = calloc(qlen, sizeof(char));
+		char *target = calloc(tlen, sizeof(char));
+		char *query_ptr = query;
+		char *target_ptr = target;
+		assert(p->ty1.preamble == PACKET_START || p->ty1.preamble == PACKET_END);
+
+		// decode first line
+		f_3to8(p->ty1.payload1, 72, buf);
+		memcpy(query, buf, MIN(72, qlen));
+		query_ptr += MIN(72, qlen);
+
+		f_3to8(p->ty1.payload2, 72, buf);
+		memcpy(target, buf, MIN(72, tlen));
+		target_ptr += MIN(72, tlen);
+
+		if (p->ty1.preamble == PACKET_START) {
+			// while (target_ptr - target < tlen + 1)
+			for (union SeedExLine *line = (union SeedExLine *)p + 1; ; ++line)
+			{
+				assert(line->ty0.preamble == PACKET_MIDDLE || line->ty0.preamble == PACKET_END);
+				f_3to8(line->ty0.payload, 168, buf);
+				if (qlen > query_ptr - query) {
+					memcpy(query_ptr, buf, MIN(84, qlen - (query_ptr - query)));
+					query_ptr += MIN(84, qlen - (query_ptr - query));
+				}
+				memcpy(target_ptr, &buf[84], MIN(84, tlen - (target_ptr - target)));
+				target_ptr += MIN(84, tlen - (target_ptr - target));
+				num_lines++;
+				if (line->ty0.preamble == PACKET_END)
+					break;
+			}
+		}
+
+		fprintf(stderr, "Params  id:0x%x(%d) qlen:%d tlen:%d w:%d init_sc:%d num_lines:%d\n", seq_id,seq_id, qlen, tlen, w, init_score, num_lines);
+		fprintf(stderr, "*** Ref:   "); for (int j = 0; j < tlen; ++j) fprintf(stderr, "%c", "ACGTN"[(int)target[j]]); fprintf(stderr, "\n");
+		fprintf(stderr, "*** Query: "); for (int j = 0; j < qlen; ++j) fprintf(stderr, "%c", "ACGTN"[(int)query[j]]); fprintf(stderr, "\n");
+
+		int lscore, gscore, tle, qle, gtle, max_off;
+		lscore = ksw_extend2(qlen, query, tlen, target, 5, opt->mat, opt->o_del, opt->e_del, opt->o_ins, opt->e_ins, w, opt->pen_clip5, opt->zdrop, init_score, &qle, &tle, &gtle, &gscore, &max_off);
+
+		fprintf(stderr, "lsc:%d\n", lscore);
+		free(query);
+		free(target);
 }
 
 void dump_mem(const char *fname, const LoadBufferTy& buf)
@@ -3025,6 +3085,14 @@ static void fpga_worker(void *data){
 				fpga_func_model(w->opt, load_buffer2, load_buffer_entry_idx2, read_buffer);
 				pthread_mutex_unlock (qc->seedex_mut);
 				// assert(read_buffer.size() == (load_buffer_entry_idx2.size() - 2 + (sizeof(ResultLine::results) / sizeof(ResultEntry))) / (sizeof(ResultLine::results) / sizeof(ResultEntry)) ) ;
+				// static bool dumped = false;
+				// if (!dumped){
+				// 	fprintf(stderr, "Dumping in.out(%d lines) out.mem(%d lines)...", load_buffer1.size(), read_buffer.size());
+				// 	dump_mem("in_1r.mem", load_buffer2);
+				// 	dump_mem("out_1r.mem", read_buffer);
+				// }
+				// dumped = true;
+
 				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
 #endif
 			}
@@ -3038,6 +3106,24 @@ static void fpga_worker(void *data){
 						mem_alnreg_t * a = &av->a[k];
 						if (a->score != alnregs_vv[i].a[j].a[k].score){
 							fprintf(stderr, "@@@ Mismatch -- [%d,%d,%d] true:%d score:%d\n", i,j,k,alnregs_vv[i].a[j].a[k].score, a->score);
+							//reverse search extansion data
+							uint32_t seq_id = 0xffffffff;
+							for (int ii = 0; ii < extension_meta.size(); ++ii) {
+								auto& e = extension_meta[ii];
+								if (e.read_idx == i && e.chain_id == j && e.seed_id == k) {
+									seq_id = ii & ((1<<24)-1);
+								}
+							}
+							assert(seq_id != 0xffffffff);
+							if (auto ptr = load_buffer_entry_idx1[seq_id]) {
+								fprintf(stderr, "LEFT\n");
+								decode_line(w->opt, ptr);
+							}
+							if (auto ptr = load_buffer_entry_idx2[seq_id]) {
+								fprintf(stderr, "RIGHT\n");
+								decode_line(w->opt, ptr);
+							}
+
 							*a = alnregs_vv[i].a[j].a[k];
 						}
 						//assert(a->score == alnregs_vv[i].a[j].a[k].score);
