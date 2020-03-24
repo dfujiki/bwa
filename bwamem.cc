@@ -2601,7 +2601,7 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 						// transfer score for sc0 in loadbuf2
 						union SeedExLine * right_ext_entry;
 						if (right_ext_entry = f1v->load_buffer_entry_idx2->at(seq_id)) {
-							right_ext_entry->ty1.params.init_score = re->lscore;
+							right_ext_entry->ty1.params.init_score = alnregs[read_idx].a[chain_id].a[seed_id].score;
 						}
 					}
 				// }
@@ -2631,14 +2631,14 @@ void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,qu
 
 		get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta, alnregs);
 
-		static int dump_timer = 1;
-		if (dump_timer == 0){
-			fprintf(stderr, "\nDumping...\n\n");
-			FILE *fp = fopen("out_1r_fpga.dat", "w");
-			fwrite(read_buffer, sizeof(union SeedExLine), total_lines, fp);
-			fclose(fp);
-		}
-		dump_timer--;
+		// static int dump_timer = 1;
+		// if (dump_timer == 0){
+		// 	fprintf(stderr, "\nDumping...\n\n");
+		// 	FILE *fp = fopen("out_1r_fpga.dat", "w");
+		// 	fwrite(read_buffer, sizeof(union SeedExLine), total_lines, fp);
+		// 	fclose(fp);
+		// }
+		// dump_timer--;
 
 		if(read_buffer) {
 			free(read_buffer);
