@@ -231,7 +231,7 @@ int fpga_verbose = 0;
 	
 	pci_bar_handle_t bw_pci_bar_handle;
 
-	fpga_pci_conn * fpga_pci_local;
+	// fpga_pci_conn * fpga_pci_local;
 
 
 	struct timeval s2_waitq1_st, s2_waitq1_et;
@@ -2612,7 +2612,7 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 }
 
 
-void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,queue_t* qe, fpga_data_tx * f1v, int channel, uint64_t addr, VExtMetaTy& extension_meta, mem_alnreg_v_v *alnregs){
+void read_scores_from_fpga(const worker_t *w, fpga_pci_conn * fpga_pci_local,queue_t* qe, fpga_data_tx * f1v, int channel, uint64_t addr, VExtMetaTy& extension_meta, mem_alnreg_v_v *alnregs){
 	int rc = 0;
 	 
 	if(f1v->n != 0){   
@@ -2878,6 +2878,13 @@ static void fpga_worker(void *data){
 	queue *q2 = qc->q2;
 	const int tid = qc->tid;
 
+#ifdef ENABLE_FPGA
+	fpga_pci_conn _fpga_pci_local, *fpga_pci_local = &_fpga_pci_local;
+	fpga_pci_local->write_fd = initialize_write_queue(0,0);
+	fpga_pci_local->read_fd = initialize_read_queue(0,0);
+	fpga_pci_local->pci_bar_handle = initialize_ocl_bus(0);
+#endif
+
 	uint32_t vled;
 	uint32_t vdip;
 
@@ -3017,7 +3024,7 @@ static void fpga_worker(void *data){
 
 				if(time_out == 0){
 					f1v.read_right = false;
-					read_scores_from_fpga(w, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
+					read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
 #else
 				LoadBufferTy read_buffer;
@@ -3094,7 +3101,7 @@ static void fpga_worker(void *data){
 
 				if(time_out == 0){
 					f1v.read_right = true;
-					read_scores_from_fpga(w, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
+					read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
 
 
@@ -3220,6 +3227,12 @@ static void fpga_worker(void *data){
 		}
 
 	}
+
+#ifdef ENABLE_FPGA
+    close_read_queue(fpga_pci_local->read_fd);
+    close_write_queue(fpga_pci_local->write_fd);
+    close_ocl_bus(fpga_pci_local->pci_bar_handle);
+#endif
 
 	pthread_exit(0);
 	//return;
@@ -3358,7 +3371,7 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 
 		fpga_mem_write_offset = 0;
 
-		fpga_pci_local = fpga_pci;
+		// fpga_pci_local = fpga_pci;
 
 
 
