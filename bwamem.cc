@@ -35,14 +35,14 @@
 #  include "malloc_wrap.h"
 #endif
 
-#define VERIFICATION
+// #define VERIFICATION
 
 #define	MEM_16G		(1ULL << 34)
 #define BATCH_SIZE  1000
 #define TIMEOUT     BATCH_SIZE*100*1000*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
-#define NUM_FPGA_THREADS	1
+#define NUM_FPGA_THREADS	2
 /* Theory on probability and scoring *ungapped* alignment
  *
  * s'(a,b) = log[P(b|a)/P(b)] = log[4P(b|a)], assuming uniform base distribution
@@ -2964,13 +2964,13 @@ static void fpga_worker(void *data){
 				// memset(load_buffer + load_buffer_size,0,write_buffer_capacity);
 
 #ifdef ENABLE_FPGA
-				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer1.data(),load_buffer1.size() * sizeof(union SeedExLine),0);
+				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer1.data(),load_buffer1.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(2*tid));
 
 				// vdip = 0x0001;
 				vdip = 2 * tid + 1;
 
 				fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
-				fprintf(stderr, "--> L:st FPGA Status 0x%x\n", vled);
+				fprintf(stderr, "--> L:st FPGA Status 0x%x --> 0x%x\n", vled, vdip);
 				fpga_exec_cnt++;
 
 				pthread_mutex_lock (qc->seedex_mut);
@@ -3046,7 +3046,7 @@ static void fpga_worker(void *data){
 				pthread_mutex_lock (qc->seedex_mut);
 
 				fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
-				fprintf(stderr, "--> R:st FPGA Status 0x%x\n", vled);
+				fprintf(stderr, "--> R:st FPGA Status 0x%x --> 0x%x\n", vled, vdip);
 				fpga_exec_cnt++;
 
 				// PCI Poke can be used for writing small amounts of data on the OCL bus
