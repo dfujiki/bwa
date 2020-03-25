@@ -42,7 +42,7 @@
 #define TIMEOUT     BATCH_SIZE*100*1000*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
-#define NUM_FPGA_THREADS	2
+#define NUM_FPGA_THREADS	4
 /* Theory on probability and scoring *ungapped* alignment
  *
  * s'(a,b) = log[P(b|a)/P(b)] = log[4P(b|a)], assuming uniform base distribution
@@ -2965,10 +2965,10 @@ static void fpga_worker(void *data){
 				// memset(load_buffer + load_buffer_size,0,write_buffer_capacity);
 
 #ifdef ENABLE_FPGA
-				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer1.data(),load_buffer1.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(2*tid));
+				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer1.data(),load_buffer1.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(tid));
 
 				// vdip = 0x0001;
-				vdip = 2 * tid + 1;
+				vdip = tid + 1;
 
 				fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
 				fprintf(stderr, "--> L:st FPGA Status 0x%x --> 0x%x\n", vled, vdip);
@@ -3013,7 +3013,7 @@ static void fpga_worker(void *data){
 
 				if(time_out == 0){
 					f1v.read_right = false;
-					read_scores_from_fpga(w, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (2*tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
+					read_scores_from_fpga(w, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
 #else
 				LoadBufferTy read_buffer;
@@ -3039,10 +3039,10 @@ static void fpga_worker(void *data){
 
 #ifdef ENABLE_FPGA
 				// right ext
-				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(2*tid+1));
+				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(tid));
 
 				// vdip = 0x0001;
-				vdip = 2 * tid + 2;
+				vdip = tid + 1;
 
 				pthread_mutex_lock (qc->seedex_mut);
 
@@ -3086,7 +3086,7 @@ static void fpga_worker(void *data){
 
 				if(time_out == 0){
 					f1v.read_right = true;
-					read_scores_from_fpga(w, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (2*tid+1) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
+					read_scores_from_fpga(w, bw_pci_bar_handle,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
 
 
