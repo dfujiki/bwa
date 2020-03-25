@@ -159,7 +159,7 @@ struct StopWatch {
 	void print_time(FILE *fd) {fprintf(fd, "[%s]\t%lu\n", name, get_time());}
 	void set_name (char * name) {this->name = name;}
 	void record() {avg.set(get_time());}
-	void stop_and_record() {stop(); record(); print_time(stderr);}
+	void stop_and_record() {stop(); record(); /*print_time(stderr);*/}
 	void stop_and_record0() {stop(); record();}
 	struct timespec t_start,t_end;
 	char * name;
@@ -3086,7 +3086,7 @@ static void fpga_worker(void *data){
 				pthread_mutex_unlock (qc->seedex_mut);
 
 				if(time_out == 0){
-					sw_exec1.avg.set(timediff);
+					sw_exec1[tid].avg.set(timediff);
 					f1v.read_right = false;
 					read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
@@ -3168,7 +3168,7 @@ static void fpga_worker(void *data){
 				pthread_mutex_unlock (qc->seedex_mut);
 
 				if(time_out == 0){
-					sw_exec2.avg.set(timediff);
+					sw_exec2[tid].avg.set(timediff);
 					f1v.read_right = true;
 					read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
