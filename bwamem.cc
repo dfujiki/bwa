@@ -144,8 +144,49 @@ typedef struct {
 } queue_coll;       // Collection of queues
 
 
+struct Average {
+	double sum = 0;
+	uint64_t count = 0;
+	double get() {return sum / count;}
+	void set(double data) { sum += data; count++;}
+};
 
-
+struct StopWatch {
+	StopWatch (char *name) : name(name) { }
+	void start() { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t_start); }
+	void stop()	 { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t_end); }
+	uint64_t get_time() {return (t_end.tv_sec - t_start.tv_sec) * 1000000000UL + (t_end.tv_nsec - t_start.tv_nsec);}
+	void print_time(FILE *fd) {fprintf(fd, "[%s]\t%lu\n", name, get_time());}
+	void set_name (char * name) {this->name = name;}
+	void record() {avg.set(get_time());}
+	void stop_and_record() {stop(); record(); print_time(stderr);}
+	void stop_and_record0() {stop(); record();}
+	struct timespec t_start,t_end;
+	char * name;
+	Average avg;
+	static void print_summary(StopWatch sw[]) {
+		Average summary;
+		for (int i = 0; i < 4; ++i) {
+			summary.set(sw[i].avg.get());
+		}
+		fprintf(stderr, "SUMMARY [%s]\t%f\n", sw[0].name, summary.get());
+	}
+};
+	#define SW_INSTANCE(name) StopWatch sw_##name [] = {#name"-0", #name"-1", #name"-2", #name"-3"};
+	SW_INSTANCE(prep)
+	SW_INSTANCE(tx1)
+	SW_INSTANCE(exec1)
+	SW_INSTANCE(rx1)
+	SW_INSTANCE(ship1)
+	SW_INSTANCE(rerun1)
+	SW_INSTANCE(score_tx)
+	SW_INSTANCE(tx2)
+	SW_INSTANCE(exec2)
+	SW_INSTANCE(rx2)
+	SW_INSTANCE(ship2)
+	SW_INSTANCE(rerun2)
+	SW_INSTANCE(rearrange)
+	#undef SW_INSTANCE
 
 
 
@@ -2554,6 +2595,7 @@ void rerun_right_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_
 void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, queue_t *qe,fpga_data_tx * f1v, VExtMetaTy& extension_meta, mem_alnreg_v_v *alnregs){
 	int i = 0;
 	int seen_empty_entry = 0;
+	if (f1v->read_right) sw_ship2[f1v->tid].start(); else sw_ship1[f1v->tid].start();
 	for(i=0;i<total_lines;i++){
 		if(bwa_verbose >= 15){
 			int k1=0,i1=0;
@@ -2590,19 +2632,25 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 					if (f1v->read_right) {
 						get_scores_right(w->opt, re, global_bns, qe->seqs[read_idx]->l_seq,&qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id, &need_rerun);
 						if (need_rerun) {
+							sw_rerun2[f1v->tid].start();
 							rerun_right_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[read_idx]->l_seq, (const uint8_t *)qe->seqs[read_idx]->seq, &qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id);
+							sw_rerun2[f1v->tid].stop_and_record0();
 						}
 					} else {
 						get_scores_left(w->opt, re, global_bns,&qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id, &need_rerun);
 						if (need_rerun) {
+							sw_rerun1[f1v->tid].start();
 							rerun_left_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[read_idx]->l_seq, (const uint8_t *)qe->seqs[read_idx]->seq, &qe->chains[read_idx]->a[chain_id], &(alnregs[read_idx].a[chain_id]), seed_id);
+							sw_rerun1[f1v->tid].stop_and_record0();
 						}
 
 						// transfer score for sc0 in loadbuf2
+						sw_score_tx[f1v->tid].start();
 						union SeedExLine * right_ext_entry;
 						if (right_ext_entry = f1v->load_buffer_entry_idx2->at(seq_id)) {
 							right_ext_entry->ty1.params.init_score = alnregs[read_idx].a[chain_id].a[seed_id].score;
 						}
+						sw_score_tx[f1v->tid].stop_and_record0();
 					}
 				// }
 			// }
@@ -2610,7 +2658,7 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 		if (seen_empty_entry > 0) break;
 
 	}
-
+	if (f1v->read_right) sw_ship2[f1v->tid].stop_and_record(); else sw_ship1[f1v->tid].stop_and_record();
 }
 
 
@@ -2627,8 +2675,10 @@ void read_scores_from_fpga(const worker_t *w, fpga_pci_conn * fpga_pci_local,que
 
 #ifdef ENABLE_FPGA
 		fprintf(stderr, "Reading from FPGA [addr:0x%x, len:%d]\n", channel * MEM_16G + addr, read_buffer_size);
+		if (f1v->read_right) sw_rx2[f1v->tid].start(); else sw_rx1[f1v->tid].start();
 		// pthread_mutex_lock (fpga_read_mut);
 		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G + addr);
+		if (f1v->read_right) sw_rx2[f1v->tid].stop_and_record(); else sw_rx1[f1v->tid].stop_and_record();
 
 		// pthread_mutex_unlock (fpga_read_mut);
 		assert(read_buffer && "Read DMA error");
@@ -2920,6 +2970,7 @@ static void fpga_worker(void *data){
 	f1v.load_buffer_valid_indices[0] = 0;
 	f1v.load_buffer_valid_indices[1] = 0;
 	f1v.extension_meta = &extension_meta;
+	f1v.tid = tid;
 
 	while(1){
 		pthread_mutex_lock (q1->mut);
@@ -2937,6 +2988,8 @@ static void fpga_worker(void *data){
 		fpga_mem_write_offset = 0;
 
 		if(last_entry == 0){
+
+			sw_prep[tid].start();
 
 			time_out = 0;
 
@@ -2973,14 +3026,18 @@ static void fpga_worker(void *data){
 			load_buffer1.push_back({PACKET_COMPLETE});
 			load_buffer2.push_back({PACKET_COMPLETE});
 
+			sw_prep[tid].stop_and_record();
+
 			if(f1v.n != 0){
 				// load_buffer = (uint8_t *)realloc(load_buffer,load_buffer_size + write_buffer_capacity);
 				// memset(load_buffer + load_buffer_size,0,write_buffer_capacity);
 
 #ifdef ENABLE_FPGA
+				sw_tx1[tid].start();
 				// pthread_mutex_lock (fpga_write_mut);
 				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer1.data(),load_buffer1.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(tid));
 				// pthread_mutex_unlock (fpga_write_mut);
+				sw_tx1[tid].stop_and_record();
 
 				// vdip = 0x0001;
 				vdip = tid + 1;
@@ -3029,6 +3086,7 @@ static void fpga_worker(void *data){
 				pthread_mutex_unlock (qc->seedex_mut);
 
 				if(time_out == 0){
+					sw_exec1.avg.set(timediff);
 					f1v.read_right = false;
 					read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
@@ -3056,9 +3114,11 @@ static void fpga_worker(void *data){
 
 #ifdef ENABLE_FPGA
 				// right ext
+				sw_tx2[tid].start();
 				// pthread_mutex_lock (fpga_write_mut);
 				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(tid));
 				// pthread_mutex_unlock (fpga_write_mut);
+				sw_tx2[tid].stop_and_record();
 
 				// vdip = 0x0001;
 				vdip = tid + 1;
@@ -3108,6 +3168,7 @@ static void fpga_worker(void *data){
 				pthread_mutex_unlock (qc->seedex_mut);
 
 				if(time_out == 0){
+					sw_exec2.avg.set(timediff);
 					f1v.read_right = true;
 					read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
@@ -3167,6 +3228,7 @@ static void fpga_worker(void *data){
 			}
 #endif
 
+			sw_rearrange[tid].start();
 			for(i = 0;i<qe->num;i++){
 				qe->regs[i] = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
 				kv_init(*qe->regs[i]);
@@ -3204,6 +3266,7 @@ static void fpga_worker(void *data){
 				free_chains(qe->chains[i]);
 				free(alnregs[i].a);
 			}
+			sw_rearrange[tid].stop_and_record();
 
 			free(f1v.a);
 			free(alnregs);
@@ -3477,6 +3540,20 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 	if (bwa_verbose >= 3){
 		fprintf(stderr, "[M::%s] Processed %d reads in %.3f CPU sec, %.3f real sec\n", __func__, n, cputime() - ctime, realtime() - rtime);
 		fprintf(stderr, " Processed seeds : %ld\n",total_seeds);
+
+		StopWatch::print_summary(sw_prep);
+		StopWatch::print_summary(sw_tx1);
+		StopWatch::print_summary(sw_exec1);
+		StopWatch::print_summary(sw_rx1);
+		StopWatch::print_summary(sw_ship1);
+		StopWatch::print_summary(sw_rerun1);
+		StopWatch::print_summary(sw_score_tx);
+		StopWatch::print_summary(sw_tx2);
+		StopWatch::print_summary(sw_exec2);
+		StopWatch::print_summary(sw_rx2);
+		StopWatch::print_summary(sw_ship2);
+		StopWatch::print_summary(sw_rerun2);
+		StopWatch::print_summary(sw_rearrange);
 	}
 
 }

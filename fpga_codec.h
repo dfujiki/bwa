@@ -122,5 +122,6 @@ typedef struct {
 	LoadBufferPtrTy* load_buffer_entry_idx2;
     size_t load_buffer_valid_indices[2];
 	VExtMetaTy* extension_meta;
+    int tid;
 } fpga_data_tx;
 #endif
