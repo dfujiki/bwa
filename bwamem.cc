@@ -35,7 +35,7 @@
 #  include "malloc_wrap.h"
 #endif
 
-// #define VERIFICATION
+#define VERIFICATION
 
 #define	MEM_16G		(1ULL << 34)
 #define BATCH_SIZE  1000
@@ -2845,17 +2845,18 @@ void worker1_MT(void *data){
 	qe->regs = NULL;
 	qe->chains = NULL;
 	qe->seqs = NULL;
-	pthread_mutex_lock (q->mut);
-	while (q->full) {
-		if(bwa_verbose >= 18){
-			printf ("producer: queue FULL.\n");
+	for (int j = 0; j < NUM_FPGA_THREADS; ++j) {
+		pthread_mutex_lock (q->mut);
+		while (q->full) {
+			if(bwa_verbose >= 18){
+				printf ("producer: queue FULL.\n");
+			}
+			pthread_cond_wait (q->notFull, q->mut);
 		}
-		pthread_cond_wait (q->notFull, q->mut);
+		queueAdd (q, qe);
+		pthread_mutex_unlock (q->mut);
+		pthread_cond_signal (q->notEmpty);
 	}
-	for (int j = 0; j < NUM_FPGA_THREADS; ++j) queueAdd (q, qe);
-	pthread_mutex_unlock (q->mut);
-	pthread_cond_signal (q->notEmpty);
-
 	
 	//return;
 	pthread_exit(0);
@@ -3251,7 +3252,7 @@ void worker2_MT(void *data)
 		pthread_cond_signal (q->notFull);
 		last_entry = 0;
 		last_entry = qe->last_entry;
-		total_last_entries += last_entry;
+		total_last_entries += last_entry > 0;
 
 		if(last_entry == 0){
 			for(i = 0;i<qe->num;i++){
@@ -3272,7 +3273,7 @@ void worker2_MT(void *data)
 		}
 
 		if(total_last_entries >= NUM_FPGA_THREADS){
-			delete_queue_entry(qe);
+			delete_queue_entry(qe); // Same heap mem for all last_entry queue.
 			break;
 		}
 
