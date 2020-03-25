@@ -182,7 +182,7 @@ int write_to_fpga(int write_fd, uint8_t * buffer, int len, uint64_t addr){
     ret = fpga_dma_burst_write(write_fd, buffer, len, addr);
 
     if(ret < 0) {
-        printf("Burst write failed on %ld \n",addr);
+        fprintf(stderr, "Burst write failed on %ld \n",addr);
     }
     return ret;
 }
@@ -197,7 +197,7 @@ uint8_t * read_from_fpga(int read_fd, int len, uint64_t addr){
     ret = fpga_dma_burst_read(read_fd, buffer, len, addr);
 
     if(ret < 0){
-        printf("Burst read failed on %ld \n",addr);
+        fprintf(stderr, "Burst read failed on %ld \n",addr);
         return NULL;
     }
 

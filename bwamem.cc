@@ -35,11 +35,11 @@
 #  include "malloc_wrap.h"
 #endif
 
-#define VERIFICATION
+// #define VERIFICATION
 
 #define	MEM_16G		(1ULL << 34)
 #define BATCH_SIZE  1000
-#define TIMEOUT     BATCH_SIZE*100*1000*1000      // Nanoseconds
+#define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
 #define NUM_FPGA_THREADS	4
@@ -228,8 +228,6 @@ int fpga_verbose = 0;
 
 	uint64_t fpga_mem_write_offset = 0;
 
-	uint32_t vled;
-	uint32_t vdip;
 	
 	pci_bar_handle_t bw_pci_bar_handle;
 
@@ -2629,6 +2627,7 @@ void read_scores_from_fpga(const worker_t *w, pci_bar_handle_t pci_bar_handle,qu
 		fprintf(stderr, "Reading from FPGA [addr:0x%x, len:%d]\n", channel * MEM_16G + addr, read_buffer_size);
 		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G + addr);
 
+		assert(read_buffer && "Read DMA error");
 		get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta, alnregs);
 
 		// static int dump_timer = 1;
@@ -2879,6 +2878,9 @@ static void fpga_worker(void *data){
 	queue *q2 = qc->q2;
 	const int tid = qc->tid;
 
+	uint32_t vled;
+	uint32_t vdip;
+
 	// Grab mutex and get head of queue
 
 	queue_t *qe;
@@ -2970,15 +2972,17 @@ static void fpga_worker(void *data){
 				// vdip = 0x0001;
 				vdip = tid + 1;
 
+				pthread_mutex_lock (qc->seedex_mut);
 				fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
-				fprintf(stderr, "--> L:st FPGA Status 0x%x --> 0x%x\n", vled, vdip);
 				fpga_exec_cnt++;
 
-				pthread_mutex_lock (qc->seedex_mut);
-
 				// PCI Poke can be used for writing small amounts of data on the OCL bus
+				// if (vled != 0x0) {
+				// 	fprintf(stderr, "[FPGA status] 0x%x waiting for ready...", vled);
+				//  	do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
+				// }	
 				rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-				fprintf(stderr, "Kick Off FPGA\n");
+				fprintf(stderr, "--> L%d:st FPGA Status 0x%x --> 0x%x\n", tid, vled, vdip);
 
 				clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
 				while(1) {
@@ -3008,8 +3012,8 @@ static void fpga_worker(void *data){
 					}
 				}
 
-				pthread_mutex_unlock (qc->seedex_mut);
 				fprintf(stderr, "Return from FPGA. Timeout:%d Tdiff:%llu\n", time_out, timediff);
+				pthread_mutex_unlock (qc->seedex_mut);
 
 				if(time_out == 0){
 					f1v.read_right = false;
@@ -3047,7 +3051,11 @@ static void fpga_worker(void *data){
 				pthread_mutex_lock (qc->seedex_mut);
 
 				fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
-				fprintf(stderr, "--> R:st FPGA Status 0x%x --> 0x%x\n", vled, vdip);
+				// if (vled != 0x0) {
+				// 	fprintf(stderr, "[FPGA status] 0x%x waiting for ready...", vled);
+				// 	do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
+				// }	
+				fprintf(stderr, "--> R%d:st FPGA Status 0x%x --> 0x%x\n", tid, vled, vdip);
 				fpga_exec_cnt++;
 
 				// PCI Poke can be used for writing small amounts of data on the OCL bus
@@ -3081,8 +3089,8 @@ static void fpga_worker(void *data){
 					}
 				}
 
-				pthread_mutex_unlock (qc->seedex_mut);
 				fprintf(stderr, "Return from FPGA. Timeout:%d Tdiff:%llu\n", time_out, timediff);
+				pthread_mutex_unlock (qc->seedex_mut);
 
 				if(time_out == 0){
 					f1v.read_right = true;
