@@ -135,7 +135,7 @@ int initialize_write_queue(int slot_id, int channel) {
     int write_fd = -1;
 
     write_fd = fpga_dma_open_queue(FPGA_DMA_XDMA, slot_id,
-            /*channel*/ 0, /*is_read*/ false);
+            /*channel*/ channel, /*is_read*/ false);
 
     if(write_fd < 0){
         printf("Unable to open write dma queue\n");
@@ -182,7 +182,7 @@ int write_to_fpga(int write_fd, uint8_t * buffer, int len, uint64_t addr){
     ret = fpga_dma_burst_write(write_fd, buffer, len, addr);
 
     if(ret < 0) {
-        fprintf(stderr, "Burst write failed on %ld \n",addr);
+        fprintf(stderr, "Burst write failed on 0x%lx \n",addr);
     }
     return ret;
 }
@@ -197,7 +197,7 @@ uint8_t * read_from_fpga(int read_fd, int len, uint64_t addr){
     ret = fpga_dma_burst_read(read_fd, buffer, len, addr);
 
     if(ret < 0){
-        fprintf(stderr, "Burst read failed on %ld \n",addr);
+        fprintf(stderr, "Burst read failed on 0x%lx \n",addr);
         return NULL;
     }
 

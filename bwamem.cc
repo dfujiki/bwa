@@ -231,7 +231,9 @@ int fpga_verbose = 0;
 	
 	pci_bar_handle_t bw_pci_bar_handle;
 
-	// fpga_pci_conn * fpga_pci_local;
+	fpga_pci_conn * fpga_pci_global;
+	pthread_mutex_t *fpga_read_mut;
+	pthread_mutex_t *fpga_write_mut;
 
 
 	struct timeval s2_waitq1_st, s2_waitq1_et;
@@ -2625,8 +2627,10 @@ void read_scores_from_fpga(const worker_t *w, fpga_pci_conn * fpga_pci_local,que
 
 #ifdef ENABLE_FPGA
 		fprintf(stderr, "Reading from FPGA [addr:0x%x, len:%d]\n", channel * MEM_16G + addr, read_buffer_size);
+		// pthread_mutex_lock (fpga_read_mut);
 		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G + addr);
 
+		// pthread_mutex_unlock (fpga_read_mut);
 		assert(read_buffer && "Read DMA error");
 		get_all_scores(w,read_buffer,total_lines,qe,f1v,extension_meta, alnregs);
 
@@ -2880,8 +2884,8 @@ static void fpga_worker(void *data){
 
 #ifdef ENABLE_FPGA
 	fpga_pci_conn _fpga_pci_local, *fpga_pci_local = &_fpga_pci_local;
-	fpga_pci_local->write_fd = initialize_write_queue(0,0);
-	fpga_pci_local->read_fd = initialize_read_queue(0,0);
+	fpga_pci_local->write_fd = initialize_write_queue(0,tid);
+	fpga_pci_local->read_fd = initialize_read_queue(0,tid);
 	fpga_pci_local->pci_bar_handle = initialize_ocl_bus(0);
 #endif
 
@@ -2974,7 +2978,9 @@ static void fpga_worker(void *data){
 				// memset(load_buffer + load_buffer_size,0,write_buffer_capacity);
 
 #ifdef ENABLE_FPGA
+				// pthread_mutex_lock (fpga_write_mut);
 				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer1.data(),load_buffer1.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(tid));
+				// pthread_mutex_unlock (fpga_write_mut);
 
 				// vdip = 0x0001;
 				vdip = tid + 1;
@@ -3050,7 +3056,9 @@ static void fpga_worker(void *data){
 
 #ifdef ENABLE_FPGA
 				// right ext
+				// pthread_mutex_lock (fpga_write_mut);
 				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(tid));
+				// pthread_mutex_unlock (fpga_write_mut);
 
 				// vdip = 0x0001;
 				vdip = tid + 1;
@@ -3371,7 +3379,7 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 
 		fpga_mem_write_offset = 0;
 
-		// fpga_pci_local = fpga_pci;
+		fpga_pci_global = fpga_pci;
 
 
 
@@ -3407,6 +3415,12 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 		pthread_mutex_t *seedex_mut = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t));
 		pthread_mutex_init (seedex_mut, NULL);
 
+		// DMA Read Mutex
+		fpga_read_mut = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t));
+		pthread_mutex_init (fpga_read_mut, NULL);
+		fpga_write_mut = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t));
+		pthread_mutex_init (fpga_write_mut, NULL);
+
 		for (int j = 0; j < NUM_FPGA_THREADS; ++j) {
 			qc[j].q1 = w.queue1;
 			qc[j].q2 = w2.queue1;
@@ -3441,6 +3455,8 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
 		queueDelete (w2.queue1);
 
 		pthread_mutex_destroy (seedex_mut);
+		pthread_mutex_destroy (fpga_read_mut);
+		pthread_mutex_destroy (fpga_write_mut);
 		free(seedex_mut);
 
 
