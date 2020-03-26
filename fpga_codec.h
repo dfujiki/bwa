@@ -2,8 +2,6 @@
 
 #define PACKED __attribute__((__packed__))
 
-#define BATCH_LINE_LIMIT	16384
-
 #define PACKET_MIDDLE       0u
 #define PACKET_START        1u
 #define PACKET_END          2u
@@ -89,7 +87,8 @@ typedef struct {
 template <typename T>
 struct arraystack
 {
-    arraystack() : n(0), a(new T[BATCH_LINE_LIMIT]) {};
+    // arraystack() : n(0), N(0), a(NULL) {};
+    explicit arraystack(size_t sz) : n(0) {a = NULL; reserve(sz);};
     ~arraystack() { if(a) free(a); }
     void push_back(T&& item) {assert(n < N); a[n++] = item;}
     void push_back(T& item) {assert(n < N); a[n++] = item;}
@@ -101,9 +100,9 @@ struct arraystack
     size_t size() {return n;}
     T* data() {return a;}
     void clear() {n = 0;}
-    void reserve(size_t sz) {if(a) free(a); assert(n == 0 && "N>0 when trying to reserve"); a = new T[BATCH_LINE_LIMIT];}
+    void reserve(size_t sz) {assert(n == 0 && "n>0 when trying to reserve"); a = (T*)realloc(a, sizeof(T)*sz); assert(a); N=sz;}
     T* a;
-    size_t n, N=BATCH_LINE_LIMIT;
+    size_t n, N;
 };
 
 typedef arraystack<union SeedExLine> LoadBufferTy;

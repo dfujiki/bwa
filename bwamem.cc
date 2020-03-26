@@ -38,6 +38,7 @@
 // #define VERIFICATION
 
 #define	MEM_16G		(1ULL << 34)
+#define BATCH_LINE_LIMIT	16384
 #define BATCH_SIZE  1000
 #define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
@@ -2897,11 +2898,11 @@ static void fpga_worker(void *data){
 	queue_t *qe;
 	int last_entry = 0;
 	int rc = 0;
-	LoadBufferTy load_buffer1;
-	LoadBufferPtrTy load_buffer_entry_idx1;
-	LoadBufferTy load_buffer2;
-	LoadBufferPtrTy load_buffer_entry_idx2;
-	VExtMetaTy extension_meta;
+	LoadBufferTy load_buffer1(BATCH_LINE_LIMIT);
+	LoadBufferPtrTy load_buffer_entry_idx1(BATCH_LINE_LIMIT);
+	LoadBufferTy load_buffer2(BATCH_LINE_LIMIT);
+	LoadBufferPtrTy load_buffer_entry_idx2(BATCH_LINE_LIMIT);
+	VExtMetaTy extension_meta(BATCH_LINE_LIMIT);
 	int time_out = 0;
 	struct timespec start,end;
 	uint64_t timediff;
@@ -2910,9 +2911,9 @@ static void fpga_worker(void *data){
 	fpga_data_tx f1v;
 	fpga_data_out_t f1;
 
-	load_buffer1.reserve(BATCH_LINE_LIMIT);
-	load_buffer2.reserve(BATCH_LINE_LIMIT);
-	extension_meta.reserve(BATCH_LINE_LIMIT);
+	// load_buffer1.reserve(BATCH_LINE_LIMIT);
+	// load_buffer2.reserve(BATCH_LINE_LIMIT);
+	// extension_meta.reserve(BATCH_LINE_LIMIT);
 	f1v.load_buffer1 = &load_buffer1;
 	f1v.load_buffer_entry_idx1 = &load_buffer_entry_idx1;
 	f1v.load_buffer2 = &load_buffer2;
