@@ -44,6 +44,7 @@
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
 #define NUM_FPGA_THREADS	4
+#define BW					41
 /* Theory on probability and scoring *ungapped* alignment
  *
  * s'(a,b) = log[P(b|a)/P(b)] = log[4P(b|a)], assuming uniform base distribution
@@ -1256,6 +1257,19 @@ struct SeedExPackageGen
 	int qlen, tlen;
 };
 
+int get_w (const int8_t *mat, int qlen, int w)
+{
+    int i, k, max, max_ins, max_del;
+    for (i = 0, max = 0; i < 25; ++i) // get the max score
+		max = max > mat[i]? max : mat[i];
+	max_ins = (int)((double)(qlen * max + 5 - 6) / 1 + 1.);
+	max_ins = max_ins > 1? max_ins : 1;
+	w = w < max_ins? w : max_ins;
+	max_del = (int)((double)(qlen * max + 5 - 6) / 1 + 1.);
+	max_del = max_del > 1? max_del : 1;
+	w = w < max_del? w : max_del; // TODO: is this necessary?
+    return w;
+}
 
 void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av, int64_t rmax0, int64_t rmax1, fpga_data_tx *f1v, fpga_data_out_t* fpga_result)
 {
@@ -1343,7 +1357,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 
 				write_buffer1.push_back({});
 				write_buffer_entry1.push_back(&write_buffer1.back());
-				gen.new_input({seq_id, s->qbeg, tmp, s->len * opt->a, aw[0]}, (char*)qs, (char*)rs, &write_buffer1.back());
+				gen.new_input({seq_id, s->qbeg, tmp, s->len * opt->a, get_w(opt->mat, s->qbeg, BW)}, (char*)qs, (char*)rs, &write_buffer1.back());
 				while (gen.has_next)
 				{
 					write_buffer1.push_back({});
@@ -1368,7 +1382,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 
 				write_buffer2.push_back({});
 				write_buffer_entry2.push_back(&write_buffer2.back());
-				gen.new_input({seq_id, l_query - qe, rmax[1] - rmax[0] - re, sc0, aw[1]}, (char*)query + qe, (char*)rseq + re, &write_buffer2.back());
+				gen.new_input({seq_id, l_query - qe, rmax[1] - rmax[0] - re, sc0, get_w(opt->mat, l_query - qe, BW)}, (char*)query + qe, (char*)rseq + re, &write_buffer2.back());
 				while (gen.has_next)
 				{
 					write_buffer2.push_back({});
