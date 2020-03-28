@@ -2733,6 +2733,7 @@ void delete_queue_entry(queue_t *qe){
 		for(i=0;i<qe->num;i++){
 			if(qe->regs[i]->a)
 				free(qe->regs[i]->a);
+			free(qe->regs[i]);
 		}
 		free(qe->regs);
 	}
@@ -2786,7 +2787,7 @@ void worker1_ST(void *data){
 
 	queue_t *qe;
 
-
+	mem_chain_v * leftover_chain = NULL;
 	/*if(w->n_processed == 0){
 	}*/
 
@@ -2809,6 +2810,13 @@ void worker1_ST(void *data){
 				w->seqs[i+j].read_id = i+j;
 				qe->seqs[j] = &w->seqs[i+j];
 				qe->num++;
+				if (__glibc_unlikely(leftover_chain)) {
+					qe->chains[j] = leftover_chain;
+					for (int k = 0; k < qe->chains[j]->n; ++k)
+						n_lines += qe->chains[j]->a[k].n * 3;
+					leftover_chain = NULL;
+					continue;
+				}
 
 				if (!(w->opt->flag&MEM_F_PE)) {
 						if (bwa_verbose >= 4) printf("=====> Processing read '%s'| (i+j) = %ld  <=====\n", w->seqs[i+j].name,(i+j));
@@ -2852,7 +2860,12 @@ void worker1_ST(void *data){
 					// err_printf("@@@ Limit batchsize to avoid buffer overflow (at:%d %d)\n", n_lines, j);
 					assert(j > 0 && "Batch line size is too small (cannot pack even 1 read).");
 					// revoke last entry
-					qe->num--; j--;
+					if (!(w->opt->flag&MEM_F_PE)) {
+						leftover_chain = qe->chains[j];
+						qe->num--; j--;
+					} else {
+						qe->num--; j--; // FIXME
+					}
 					break;
 				}
 
@@ -3244,7 +3257,12 @@ static void fpga_worker(void *data){
 						//assert(a->score == alnregs_vv[i].a[j].a[k].score);
 					}
 				}
+
+				// free reference scores
+				for (int j = 0;j<alnregs_vv[i].n;j++) kv_destroy(alnregs_vv[i].a[j]);
+				free(alnregs_vv[i].a);
 			}
+			free(alnregs_vv);
 #endif
 
 			sw_rearrange[tid].start();
