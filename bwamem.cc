@@ -2527,6 +2527,7 @@ void rerun_left_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t
 			a->truesc = gscore;
 		}
 		free(qs); free(rs);
+		free(rseq);
 	} else a->score = a->truesc = s->len * opt->a, a->qb = 0, a->rb = s->rbeg;
 }
 
@@ -2564,6 +2565,7 @@ void rerun_right_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_
 			a->qe = l_query, a->re = rmax[0] + re + gtle;
 			a->truesc += gscore - sc0;
 		}
+		free(rseq);
 	} else a->qe = l_query, a->re = s->rbeg + s->len;
 }
 
