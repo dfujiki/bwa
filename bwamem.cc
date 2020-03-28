@@ -35,7 +35,7 @@
 #  include "malloc_wrap.h"
 #endif
 
-// #define VERIFICATION
+#define VERIFICATION
 
 #define	MEM_16G		(1ULL << 34)
 // #define BATCH_LINE_LIMIT	16384
@@ -1216,6 +1216,19 @@ struct SeedExPackageGen
 	int qlen, tlen;
 };
 
+int get_w (const int8_t *mat, int qlen, int w)
+{
+    int i, k, max, max_ins, max_del;
+    for (i = 0, max = 0; i < 25; ++i) // get the max score
+		max = max > mat[i]? max : mat[i];
+	max_ins = (int)((double)(qlen * max + 5 - 6) / 1 + 1.);
+	max_ins = max_ins > 1? max_ins : 1;
+	w = w < max_ins? w : max_ins;
+	max_del = (int)((double)(qlen * max + 5 - 6) / 1 + 1.);
+	max_del = max_del > 1? max_del : 1;
+	w = w < max_del? w : max_del; // TODO: is this necessary?
+    return w;
+}
 
 void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint8_t *pac, int l_query, const uint8_t *query, const mem_chain_t *c, mem_alnreg_v *av, int64_t rmax0, int64_t rmax1, fpga_data_tx *f1v, fpga_data_out_t* fpga_result)
 {
@@ -1303,7 +1316,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 
 				write_buffer1.push_back({});
 				write_buffer_entry1.push_back(&write_buffer1.back());
-				gen.new_input({seq_id, s->qbeg, tmp, s->len * opt->a, aw[0]}, (char*)qs, (char*)rs, &write_buffer1.back());
+				gen.new_input({seq_id, s->qbeg, tmp, s->len * opt->a, get_w(opt->mat, s->qbeg, BW)}, (char*)qs, (char*)rs, &write_buffer1.back());
 				while (gen.has_next)
 				{
 					write_buffer1.push_back({});
@@ -1328,7 +1341,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 
 				write_buffer2.push_back({});
 				write_buffer_entry2.push_back(&write_buffer2.back());
-				gen.new_input({seq_id, l_query - qe, rmax[1] - rmax[0] - re, sc0, aw[1]}, (char*)query + qe, (char*)rseq + re, &write_buffer2.back());
+				gen.new_input({seq_id, l_query - qe, rmax[1] - rmax[0] - re, sc0, get_w(opt->mat, l_query - qe, BW)}, (char*)query + qe, (char*)rseq + re, &write_buffer2.back());
 				while (gen.has_next)
 				{
 					write_buffer2.push_back({});
@@ -2739,10 +2752,10 @@ void worker1_ST(void *data){
 		qe->num = 0;
 		qe->last_entry = 0;
 		qe->starting_read_id = i;
+		int n_lines = 0;
 		for(j = 0;j<BATCH_SIZE;j++){
-			int n_lines = 0;
 
-			if(i+j < w->n_processed){
+			if(__glibc_likely(i+j < w->n_processed && i+j < (tid + 1) * K)){
 				w->seqs[i+j].read_id = i+j;
 				qe->seqs[j] = &w->seqs[i+j];
 				qe->num++;
@@ -2751,7 +2764,8 @@ void worker1_ST(void *data){
 						if (bwa_verbose >= 4) printf("=====> Processing read '%s'| (i+j) = %ld  <=====\n", w->seqs[i+j].name,(i+j));
 						
 						seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[i+j].l_seq, w->seqs[i+j].seq, w->aux[tid], &qe->chains[j]);
-						n_lines += qe->chains[j]->n * 3;
+						for (int k = 0; k < qe->chains[j]->n; ++k)
+							n_lines += qe->chains[j]->a[k].n * 3;
 //                        qe->regs[j] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[i+j].l_seq, w->seqs[i+j].seq, w->aux[tid],&f1, &qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)(i+j));
 						//qe->fpga_results->a[j].fpga_entry_present = f1.fpga_entry_present;
 						/*if(f1.fpga_entry_present){
@@ -2762,7 +2776,8 @@ void worker1_ST(void *data){
 				} else {
 						if (bwa_verbose >= 4) printf("=====> Processing read '%s'/1 <=====\n", w->seqs[(i+j)<<1|0].name);
 						seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|0].l_seq, w->seqs[(i+j)<<1|0].seq, w->aux[tid], &qe->chains[j<<1|0]);
-						n_lines += qe->chains[j<<1|0]->n * 3;
+						for (int k = 0; k < qe->chains[j<<1|0]->n; ++k)
+							n_lines += qe->chains[j<<1|0]->a[k].n * 3;
 						//qe->regs[(j)<<1|0] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|0].l_seq, w->seqs[(i+j)<<1|0].seq, w->aux[tid],&f1,&qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)((i+j)<<1|0));
 						//qe->fpga_results->a[j<<1|0].fpga_entry_present = f1.fpga_entry_present;
 						//if(f1.fpga_entry_present){
@@ -2773,7 +2788,8 @@ void worker1_ST(void *data){
 						if (bwa_verbose >= 4) printf("=====> Processing read '%s'/2 <=====\n", w->seqs[(i+j)<<1|1].name);
 
 						seeding(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|1].l_seq, w->seqs[(i+j)<<1|1].seq, w->aux[tid], &qe->chains[j<<1|1]);
-						n_lines += qe->chains[j<<1|1]->n * 3;
+						for (int k = 0; k < qe->chains[j<<1|1]->n; ++k)
+							n_lines += qe->chains[j<<1|1]->a[k].n * 3;
 						//qe->regs[(j)<<1|1] = mem_align1_core(w->opt, w->bwt, w->bns, w->pac, w->seqs[(i+j)<<1|1].l_seq, w->seqs[(i+j)<<1|1].seq, w->aux[tid],&f1,&qe->load_buffer, &(qe->load_buffer_size),&write_buffer_index,(uint32_t)((i+j)<<1|1));
 						//qe->fpga_results->a[i<<1|1].fpga_entry_present = f1.fpga_entry_present;
 						//if(f1.fpga_entry_present){
@@ -3036,7 +3052,7 @@ static void fpga_worker(void *data){
 					read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
 				}
 #else
-				LoadBufferTy read_buffer;
+				LoadBufferTy read_buffer(BATCH_LINE_LIMIT/4);
 				f1v.read_right = false;
 				pthread_mutex_lock (qc->seedex_mut);
 				fpga_func_model(w->opt, load_buffer1, load_buffer_entry_idx1, read_buffer);
