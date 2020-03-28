@@ -38,12 +38,13 @@
 // #define VERIFICATION
 
 #define	MEM_16G		(1ULL << 34)
-#define BATCH_LINE_LIMIT	16384
-#define BATCH_SIZE  1000
+// #define BATCH_LINE_LIMIT	16384
+#define BATCH_SIZE  BATCH_LINE_LIMIT/8
 #define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
 #define NUM_FPGA_THREADS	4
+#define BW			41
 /* Theory on probability and scoring *ungapped* alignment
  *
  * s'(a,b) = log[P(b|a)/P(b)] = log[4P(b|a)], assuming uniform base distribution
@@ -1429,7 +1430,8 @@ void fpga_func_model(const mem_opt_t *opt, LoadBufferTy& load_buf, LoadBufferPtr
 		if (!p) continue;
 		int qlen = p->ty1.params.qlen;
 		int tlen = p->ty1.params.tlen;
-		int w = p->ty1.params.w;
+		// int w = p->ty1.params.w;
+		int w = opt->w;
 		int init_score = p->ty1.params.init_score;
 		int seq_id = p->ty1.params.seq_id;
 		char *query = calloc(qlen, sizeof(char));

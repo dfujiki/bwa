@@ -1,7 +1,7 @@
 CC=			gcc
 #CC=			clang --analyze
-CFLAGS=		-g -Wall -Wno-unused-function -O0
-CXXFLAGS=		-g -Wall -Wno-unused-function -O0 --std=c++11 -fpermissive
+CFLAGS=		-g -Wall -Wno-unused-function -O3
+CXXFLAGS=		-g -Wall -Wno-unused-function -O3 --std=c++11 -fpermissive
 WRAP_MALLOC=-DUSE_MALLOC_WRAPPERS
 AR=			ar
 DFLAGS=		-DHAVE_PTHREAD $(WRAP_MALLOC)
@@ -21,6 +21,11 @@ ifdef FPGA
 	AOBJS += dma_common.o
 	CXXFLAGS += -DENABLE_FPGA
 	CFLAGS += -DENABLE_FPGA
+endif
+ifdef BATCH
+	DFLAGS += -DBATCH_LINE_LIMIT=${BATCH}
+else
+	DFLAGS += -DBATCH_LINE_LIMIT=16384
 endif
 
 SUBDIRS=	.
