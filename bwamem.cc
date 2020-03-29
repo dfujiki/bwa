@@ -2864,9 +2864,9 @@ void worker1_ST(void *data){
 					// revoke last entry
 					if (!(w->opt->flag&MEM_F_PE)) {
 						leftover_chain = qe->chains[j];
-						qe->num--; j--;
+						qe->num--; // don't have to do j-- because j++ in for() won;t be executed.
 					} else {
-						qe->num--; j--; // FIXME
+						qe->num--; // FIXME
 					}
 					break;
 				}
