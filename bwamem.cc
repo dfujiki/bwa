@@ -36,6 +36,7 @@
 #endif
 
 #define VERIFICATION
+// #define POSTPROCESS_TH_C
 
 #define	MEM_16G		(1ULL << 34)
 // #define BATCH_LINE_LIMIT	16384
@@ -80,6 +81,7 @@ typedef struct{
 	mem_chain_v ** chains;
 	int64_t num;
 	int64_t starting_read_id;
+	fpga_data_tx *f1v;
 
 	// For loading
 	int last_entry;
@@ -1238,11 +1240,11 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 	uint8_t *rseq = 0;
 	uint64_t *srt;
 	SeedExPackageGen gen;
-	auto& write_buffer_entry1 = *f1v->load_buffer_entry_idx1;
-	auto& write_buffer1 = *f1v->load_buffer1;
-	auto& write_buffer_entry2 = *f1v->load_buffer_entry_idx2;
-	auto& write_buffer2 = *f1v->load_buffer2;
-	auto& extension_meta = *f1v->extension_meta;
+	auto& write_buffer_entry1 = f1v->load_buffer_entry_idx1;
+	auto& write_buffer1 = f1v->load_buffer1;
+	auto& write_buffer_entry2 = f1v->load_buffer_entry_idx2;
+	auto& write_buffer2 = f1v->load_buffer2;
+	auto& extension_meta = f1v->extension_meta;
 
 	if (c->n == 0) return;
 		// FPGA : Write read data into write_buffer
@@ -2238,7 +2240,7 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
 				mem_chain2aln_cpu(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
 			}
   		  	else{
-  	 			f1v->extension_meta->back().chain_id = i;
+  	 			f1v->extension_meta.back().chain_id = i;
   	 			mem_chain2aln_to_fpga(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1, f1v, data_out);
   		  	}
 		}
@@ -2618,7 +2620,7 @@ void get_all_scores(const worker_t *w, uint8_t *read_buffer, int total_lines, qu
 
 						// transfer score for sc0 in loadbuf2
 						union SeedExLine * right_ext_entry;
-						if (right_ext_entry = f1v->load_buffer_entry_idx2->at(seq_id)) {
+						if (right_ext_entry = f1v->load_buffer_entry_idx2.at(seq_id)) {
 							right_ext_entry->ty1.params.init_score = alnregs[read_idx].a[chain_id].a[seed_id].score;
 						}
 					}
@@ -2832,6 +2834,41 @@ void worker1_ST(void *data){
 			qe->last_entry = 1;
 		}*/
 
+		// seed extension prep
+		fpga_data_out_t f1;
+		qe->f1v = new fpga_data_tx(BATCH_LINE_LIMIT);
+		qe->f1v->a = (fpga_data_out_t *) malloc(qe->num * sizeof(fpga_data_out_t));
+		qe->f1v->n = 0;
+		qe->f1v->extension_meta.push_back({0, 0, 0});
+
+		qe->f1v->alnregs = (mem_alnreg_v_v *)calloc(qe->num, sizeof(mem_alnreg_v_v)); // read->chain->reg
+		#ifdef VERIFICATION
+		qe->f1v->alnregs_ref = (mem_alnreg_v_v *)calloc(qe->num, sizeof(mem_alnreg_v_v)); // read->chain->reg
+		#endif
+
+		for(int j = 0;j<qe->num;j++){
+			f1.fpga_entry_present = 0;
+			qe->f1v->extension_meta.back().read_idx = j;
+			kv_init(qe->f1v->alnregs[j]);
+			seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[j]->l_seq, qe->seqs[j]->seq, qe->chains[j], &qe->f1v->alnregs[j], qe->f1v, &f1, 1);
+			#ifdef VERIFICATION
+			kv_init(qe->f1v->alnregs_ref[j]);
+			seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[j]->l_seq, qe->seqs[j]->seq, qe->chains[j], &qe->f1v->alnregs_ref[j], qe->f1v, &f1, 2);
+			#endif
+
+			qe->f1v->a[j].fpga_entry_present = f1.fpga_entry_present;
+			if(f1.fpga_entry_present){
+				qe->f1v->n++;
+			}
+			// Dont free chains yet
+			//free(qe->chains[j]);
+		}
+
+		// push sentinel
+		qe->f1v->load_buffer1.push_back({PACKET_COMPLETE});
+		qe->f1v->load_buffer2.push_back({PACKET_COMPLETE});
+
+
 		
 		// Grab queue mutex and add queue_element in the queue
 		pthread_mutex_lock (q->mut);
@@ -2931,29 +2968,12 @@ static void fpga_worker(void *data){
 	queue_t *qe;
 	int last_entry = 0;
 	int rc = 0;
-	LoadBufferTy load_buffer1(BATCH_LINE_LIMIT);
-	LoadBufferPtrTy load_buffer_entry_idx1(BATCH_LINE_LIMIT);
-	LoadBufferTy load_buffer2(BATCH_LINE_LIMIT);
-	LoadBufferPtrTy load_buffer_entry_idx2(BATCH_LINE_LIMIT);
-	VExtMetaTy extension_meta(BATCH_LINE_LIMIT);
+
 	int time_out = 0;
 	struct timespec start,end;
 	uint64_t timediff;
 
-
-	fpga_data_tx f1v;
 	fpga_data_out_t f1;
-
-	// load_buffer1.reserve(BATCH_LINE_LIMIT);
-	// load_buffer2.reserve(BATCH_LINE_LIMIT);
-	// extension_meta.reserve(BATCH_LINE_LIMIT);
-	f1v.load_buffer1 = &load_buffer1;
-	f1v.load_buffer_entry_idx1 = &load_buffer_entry_idx1;
-	f1v.load_buffer2 = &load_buffer2;
-	f1v.load_buffer_entry_idx2 = &load_buffer_entry_idx2;
-	f1v.load_buffer_valid_indices[0] = 0;
-	f1v.load_buffer_valid_indices[1] = 0;
-	f1v.extension_meta = &extension_meta;
 
 	while(1){
 		pthread_mutex_lock (q1->mut);
@@ -2976,36 +2996,13 @@ static void fpga_worker(void *data){
 
 			int i = 0;
 
-			f1v.a = (fpga_data_out_t *) malloc(qe->num * sizeof(fpga_data_out_t));
-			f1v.n = 0;
-			extension_meta.push_back({0, 0, 0});
+			fpga_data_tx& f1v = *(qe->f1v);
+			LoadBufferTy& load_buffer1 = qe->f1v->load_buffer1;
+			LoadBufferPtrTy& load_buffer_entry_idx1 = qe->f1v->load_buffer_entry_idx1;
+			LoadBufferTy& load_buffer2 = qe->f1v->load_buffer2;
+			LoadBufferPtrTy& load_buffer_entry_idx2 = qe->f1v->load_buffer_entry_idx2;
+			VExtMetaTy& extension_meta = qe->f1v->extension_meta;
 
-			mem_alnreg_v_v * alnregs = (mem_alnreg_v_v *)calloc(qe->num, sizeof(mem_alnreg_v_v)); // read->chain->reg
-			#ifdef VERIFICATION
-			mem_alnreg_v_v * alnregs_vv = (mem_alnreg_v_v *)calloc(qe->num, sizeof(mem_alnreg_v_v)); // read->chain->reg
-			#endif
-
-			for(i = 0;i<qe->num;i++){
-				f1.fpga_entry_present = 0;
-				extension_meta.back().read_idx = i;
-				kv_init(alnregs[i]);
-				seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1v, &f1, 1);
-				#ifdef VERIFICATION
-				kv_init(alnregs_vv[i]);
-				seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs_vv[i], &f1v, &f1, 2);
-				#endif
-
-				f1v.a[i].fpga_entry_present = f1.fpga_entry_present;
-				if(f1.fpga_entry_present){
-				  f1v.n++;
-				}
-				// Dont free chains yet
-				//free(qe->chains[i]);
-			}
-
-			// push sentinel
-			load_buffer1.push_back({PACKET_COMPLETE});
-			load_buffer2.push_back({PACKET_COMPLETE});
 
 			if(f1v.n != 0){
 				// load_buffer = (uint8_t *)realloc(load_buffer,load_buffer_size + write_buffer_capacity);
@@ -3064,7 +3061,7 @@ static void fpga_worker(void *data){
 
 				if(time_out == 0){
 					f1v.read_right = false;
-					read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
+					read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, qe->f1v->alnregs);
 				}
 #else
 				LoadBufferTy read_buffer(BATCH_LINE_LIMIT/4);
@@ -3083,69 +3080,70 @@ static void fpga_worker(void *data){
 
 				// FIXME:: Count only non-null from entry idx
 				// assert(read_buffer.size() == (load_buffer_entry_idx1.size() - 2 + (sizeof(ResultLine::results) / sizeof(ResultEntry))) / (sizeof(ResultLine::results) / sizeof(ResultEntry)) ) ;
-				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
+				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, qe->f1v->alnregs);
 #endif
 
 
 
 #ifdef ENABLE_FPGA
-				// right ext
-				// pthread_mutex_lock (fpga_write_mut);
-				write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(tid));
-				// pthread_mutex_unlock (fpga_write_mut);
+				if (time_out == 0) {
+					// right ext
+					// pthread_mutex_lock (fpga_write_mut);
+					write_to_fpga(fpga_pci_local->write_fd,(uint8_t*)load_buffer2.data(),load_buffer2.size() * sizeof(union SeedExLine),BATCH_LINE_LIMIT*64*(tid));
+					// pthread_mutex_unlock (fpga_write_mut);
 
-				// vdip = 0x0001;
-				vdip = tid + 1;
+					// vdip = 0x0001;
+					vdip = tid + 1;
 
-				pthread_mutex_lock (qc->seedex_mut);
+					pthread_mutex_lock (qc->seedex_mut);
 
-				fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
-				// if (vled != 0x0) {
-				// 	fprintf(stderr, "[FPGA status] 0x%x waiting for ready...", vled);
-				// 	do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
-				// }	
-				fprintf(stderr, "--> R%d:st FPGA Status 0x%x --> 0x%x\n", tid, vled, vdip);
-				fpga_exec_cnt++;
+					fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
+					// if (vled != 0x0) {
+					// 	fprintf(stderr, "[FPGA status] 0x%x waiting for ready...", vled);
+					// 	do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
+					// }	
+					fprintf(stderr, "--> R%d:st FPGA Status 0x%x --> 0x%x\n", tid, vled, vdip);
+					fpga_exec_cnt++;
 
-				// PCI Poke can be used for writing small amounts of data on the OCL bus
-				rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+					// PCI Poke can be used for writing small amounts of data on the OCL bus
+					rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 
-				clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
-				while(1) {
+					clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
+					while(1) {
 
-					rc = fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
+						rc = fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
 
-					if(vled == 0x10)  {
-						vdip = 0x0000;
-						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-						break;
-					}
-
-					clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
-					timediff = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
-					if(timediff > TIMEOUT){
-						if(bwa_verbose >= 10){
-							fprintf(stderr,"Going into timeout mode\n");
-							fprintf(stderr,"Starting : %ld\n",qe->starting_read_id);
+						if(vled == 0x10)  {
+							vdip = 0x0000;
+							rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+							break;
 						}
-						fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
-						fprintf(stderr, "TO:::FPGA Status 0x%x\n", vled);
-						vdip = 0xffffffff;
-						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-						do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
-						time_out = 1;
-						break;
+
+						clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
+						timediff = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+						if(timediff > TIMEOUT){
+							if(bwa_verbose >= 10){
+								fprintf(stderr,"Going into timeout mode\n");
+								fprintf(stderr,"Starting : %ld\n",qe->starting_read_id);
+							}
+							fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
+							fprintf(stderr, "TO:::FPGA Status 0x%x\n", vled);
+							vdip = 0xffffffff;
+							rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
+							do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
+							time_out = 1;
+							break;
+						}
+					}
+
+					fprintf(stderr, "Return from FPGA. Timeout:%d Tdiff:%llu\n", time_out, timediff);
+					pthread_mutex_unlock (qc->seedex_mut);
+
+					if(time_out == 0){
+						f1v.read_right = true;
+						read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, qe->f1v->alnregs);
 					}
 				}
-
-				fprintf(stderr, "Return from FPGA. Timeout:%d Tdiff:%llu\n", time_out, timediff);
-				pthread_mutex_unlock (qc->seedex_mut);
-
-				if(time_out == 0){
-					f1v.read_right = true;
-					read_scores_from_fpga(w, fpga_pci_local,qe,&f1v,0, BATCH_LINE_LIMIT*64*4 + (tid) * BATCH_LINE_LIMIT/4*64, extension_meta, alnregs);
-				}
-
 
 #else
 				read_buffer.clear();
@@ -3162,66 +3160,70 @@ static void fpga_worker(void *data){
 				// }
 				// dumped = true;
 
-				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, alnregs);
+				get_all_scores(w,(uint8_t *)read_buffer.data(),read_buffer.size(),qe,&f1v,extension_meta, qe->f1v->alnregs);
 #endif
 			}
 
 			// model validation
 #ifdef VERIFICATION
-			for(i = 0;i<qe->num;i++){
-				for(int j = 0;j<alnregs[i].n;j++){
-					mem_alnreg_v * av = &alnregs[i].a[j];
-					for (int k = 0; k < av->n; k++) {
-						mem_alnreg_t * a = &av->a[k];
-						if (a->score != alnregs_vv[i].a[j].a[k].score){
-							fprintf(stderr, "@@@ Mismatch -- [%d,%d,%d] true:%d score:%d\n", i,j,k,alnregs_vv[i].a[j].a[k].score, a->score);
-							//reverse search extansion data
-							uint32_t seq_id = 0xffffffff;
-							for (int ii = 0; ii < extension_meta.size(); ++ii) {
-								auto& e = extension_meta[ii];
-								if (e.read_idx == i && e.chain_id == j && e.seed_id == k) {
-									seq_id = ii & ((1<<24)-1);
+			if (time_out == 0) {
+				for(i = 0;i<qe->num;i++){
+					for(int j = 0;j<qe->f1v->alnregs[i].n;j++){
+						mem_alnreg_v * av = &qe->f1v->alnregs[i].a[j];
+						for (int k = 0; k < av->n; k++) {
+							mem_alnreg_t * a = &av->a[k];
+							if (a->score != qe->f1v->alnregs_ref[i].a[j].a[k].score){
+								fprintf(stderr, "@@@ Mismatch -- [%d,%d,%d] true:%d score:%d\n", i,j,k,qe->f1v->alnregs_ref[i].a[j].a[k].score, a->score);
+								//reverse search extansion data
+								uint32_t seq_id = 0xffffffff;
+								for (int ii = 0; ii < extension_meta.size(); ++ii) {
+									auto& e = extension_meta[ii];
+									if (e.read_idx == i && e.chain_id == j && e.seed_id == k) {
+										seq_id = ii & ((1<<24)-1);
+									}
 								}
-							}
-							assert(seq_id != 0xffffffff);
-							if (auto ptr = load_buffer_entry_idx1[seq_id]) {
-								fprintf(stderr, "LEFT\n");
-								decode_line(w->opt, ptr);
-							}
-							if (auto ptr = load_buffer_entry_idx2[seq_id]) {
-								fprintf(stderr, "RIGHT\n");
-								decode_line(w->opt, ptr);
-							}
+								assert(seq_id != 0xffffffff);
+								if (auto ptr = load_buffer_entry_idx1[seq_id]) {
+									fprintf(stderr, "LEFT\n");
+									decode_line(w->opt, ptr);
+								}
+								if (auto ptr = load_buffer_entry_idx2[seq_id]) {
+									fprintf(stderr, "RIGHT\n");
+									decode_line(w->opt, ptr);
+								}
 
-							*a = alnregs_vv[i].a[j].a[k];
+								*a = qe->f1v->alnregs_ref[i].a[j].a[k];
+							}
+							//assert(a->score == alnregs_vv[i].a[j].a[k].score);
 						}
-						//assert(a->score == alnregs_vv[i].a[j].a[k].score);
 					}
+
+					// free reference scores
+					for (int j = 0;j<qe->f1v->alnregs_ref[i].n;j++) kv_destroy(qe->f1v->alnregs_ref[i].a[j]);
+					free(qe->f1v->alnregs_ref[i].a);
 				}
-
-				// free reference scores
-				for (int j = 0;j<alnregs_vv[i].n;j++) kv_destroy(alnregs_vv[i].a[j]);
-				free(alnregs_vv[i].a);
+				free(qe->f1v->alnregs_ref);
 			}
-			free(alnregs_vv);
 #endif
+			qe->f1v->timeout = time_out;
 
+#ifndef POSTPROCESS_TH_C
 			for(i = 0;i<qe->num;i++){
 				qe->regs[i] = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
 				kv_init(*qe->regs[i]);
 
 				// time_out = 1;
 				if(time_out == 1){
-					seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &alnregs[i], &f1v, &f1, 0);
-					if (alnregs[i].n > 0) {
-						kv_copy(mem_alnreg_t, *qe->regs[i], alnregs[i].a[0]);
-						kv_destroy(alnregs[i].a[0]);
+					seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &qe->f1v->alnregs[i], &f1v, &f1, 0);
+					if (qe->f1v->alnregs[i].n > 0) {
+						kv_copy(mem_alnreg_t, *qe->regs[i], qe->f1v->alnregs[i].a[0]);
+						kv_destroy(qe->f1v->alnregs[i].a[0]);
 					}
 				} else {
 					// Perform postprocess
 					for (int j = 0; j < qe->chains[i]->n; ++j) {
-						postprocess_alnreg(w->opt, qe->seqs[i]->l_seq, &(qe->chains[i]->a[j]), &(alnregs[i].a[j]), qe->regs[i]);
-						kv_destroy(alnregs[i].a[j]);
+						postprocess_alnreg(w->opt, qe->seqs[i]->l_seq, &(qe->chains[i]->a[j]), &(qe->f1v->alnregs[i].a[j]), qe->regs[i]);
+						kv_destroy(qe->f1v->alnregs[i].a[j]);
 					}
 				}
 				mem_alnreg_v * regs = qe->regs[i];
@@ -3241,11 +3243,11 @@ static void fpga_worker(void *data){
 				}
 				// Free chains now
 				free_chains(qe->chains[i]);
-				free(alnregs[i].a);
+				free(qe->f1v->alnregs[i].a);
 			}
 
 			free(f1v.a);
-			free(alnregs);
+			free(qe->f1v->alnregs);
 			f1v.n = 0;
 
 			load_buffer1.clear();
@@ -3256,6 +3258,8 @@ static void fpga_worker(void *data){
 			f1v.load_buffer_valid_indices[0] = 0;
 			f1v.load_buffer_valid_indices[1] = 0;
 
+			delete qe->f1v;
+#endif
 		}
 
 		// Grab queue mutex and add queue_element in the queue
@@ -3324,6 +3328,45 @@ void worker2_MT(void *data)
 
 		if(last_entry == 0){
 			for(i = 0;i<qe->num;i++){
+#ifdef POSTPROCESS_TH_C
+				fpga_data_out_t f1;
+				qe->regs[i] = (mem_alnreg_v *) malloc(sizeof(mem_alnreg_v));
+				kv_init(*qe->regs[i]);
+
+				if(qe->f1v->timeout == 1){
+					seed_extension(w->opt, w->bwt, w->bns, w->pac, qe->seqs[i]->l_seq, qe->seqs[i]->seq, qe->chains[i], &qe->f1v->alnregs[i], qe->f1v, &f1, 0);
+					if (qe->f1v->alnregs[i].n > 0) {
+						kv_copy(mem_alnreg_t, *qe->regs[i], qe->f1v->alnregs[i].a[0]);
+						kv_destroy(qe->f1v->alnregs[i].a[0]);
+					}
+				} else {
+					// Perform postprocess
+					for (int j = 0; j < qe->chains[i]->n; ++j) {
+						postprocess_alnreg(w->opt, qe->seqs[i]->l_seq, &(qe->chains[i]->a[j]), &(qe->f1v->alnregs[i].a[j]), qe->regs[i]);
+						kv_destroy(qe->f1v->alnregs[i].a[j]);
+					}
+				}
+				mem_alnreg_v * regs = qe->regs[i];
+				regs->n = mem_sort_dedup_patch(w->opt, w->bns, w->pac, (uint8_t*)qe->seqs[i]->seq, regs->n, regs->a);
+
+				if (bwa_verbose >= 4) {
+					err_printf("* %ld chains remain after removing duplicated chains\n", regs->n);
+					for (int ii = 0; ii < regs->n; ++ii) {
+						mem_alnreg_t *p = &(regs->a[ii]);
+						printf("** %d, [%d,%d) <=> [%ld,%ld)\n", p->score, p->qb, p->qe, (long)p->rb, (long)p->re);
+					}
+				}
+				for (int ii = 0; ii < regs->n; ++ii) {
+					mem_alnreg_t *p = &(regs->a[ii]);
+					if (p->rid >= 0 && w->bns->anns[p->rid].is_alt)
+						p->is_alt = 1;
+				}
+				// Free chains now
+				free_chains(qe->chains[i]);
+				free(qe->f1v->alnregs[i].a);
+
+
+#endif
 				if (!(w->opt->flag&MEM_F_PE)) {
 					if (bwa_verbose >= 4) printf("(T3) =====> Finalizing read '%s' <=====\n", qe->seqs[i]->name);
 
@@ -3337,6 +3380,11 @@ void worker2_MT(void *data)
 					//free(w->regs[i<<1|0].a); free(w->regs[i<<1|1].a);
 				}
 			}
+#ifdef POSTPROCESS_TH_C
+			free(qe->f1v->a);
+			free(qe->f1v->alnregs);
+			delete qe->f1v;
+#endif
 			delete_queue_entry(qe);
 		}
 

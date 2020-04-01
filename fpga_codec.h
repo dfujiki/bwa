@@ -111,15 +111,19 @@ typedef arraystack<struct extension_meta_t> VExtMetaTy;
 // typedef std::vector<union SeedExLine> LoadBufferTy;
 // typedef std::vector<union SeedExLine*> LoadBufferPtrTy;
 
-typedef struct {
+struct fpga_data_tx{
     size_t n,m;
     fpga_data_out_t *a;
 	bool read_right;
-	LoadBufferTy* load_buffer1;
-	LoadBufferPtrTy* load_buffer_entry_idx1;
-	LoadBufferTy* load_buffer2;
-	LoadBufferPtrTy* load_buffer_entry_idx2;
+	LoadBufferTy load_buffer1;
+	LoadBufferPtrTy load_buffer_entry_idx1;
+	LoadBufferTy load_buffer2;
+	LoadBufferPtrTy load_buffer_entry_idx2;
     size_t load_buffer_valid_indices[2];
-	VExtMetaTy* extension_meta;
-} fpga_data_tx;
+	VExtMetaTy extension_meta;
+    mem_alnreg_v_v * alnregs;
+    mem_alnreg_v_v * alnregs_ref;
+    int timeout = 0;
+    fpga_data_tx(size_t n) : load_buffer1(n), load_buffer2(n), load_buffer_entry_idx1(n), load_buffer_entry_idx2(n), extension_meta(n), load_buffer_valid_indices({0}) { }
+};
 #endif
