@@ -3295,6 +3295,7 @@ static void fpga_worker(void *data){
 
 
 
+int w2_total_last_entries = 0;
 
 void worker2_MT(void *data)
 {
@@ -3319,12 +3320,12 @@ void worker2_MT(void *data)
 				printf (" (T3) queue EMPTY.\n");
 			pthread_cond_wait (q->notEmpty, q->mut);
 		}
-		queueDel (q, &qe);
+		queueDel(q, &qe);
+		last_entry = qe->last_entry;
+		w2_total_last_entries += last_entry > 0;
+		total_last_entries = w2_total_last_entries;
 		pthread_mutex_unlock (q->mut);
 		pthread_cond_signal (q->notFull);
-		last_entry = 0;
-		last_entry = qe->last_entry;
-		total_last_entries += last_entry > 0;
 
 		if(last_entry == 0){
 			for(i = 0;i<qe->num;i++){
@@ -3388,8 +3389,26 @@ void worker2_MT(void *data)
 			delete_queue_entry(qe);
 		}
 
-		if(total_last_entries >= NUM_FPGA_THREADS){
-			delete_queue_entry(qe); // Same heap mem for all last_entry queue.
+		if(total_last_entries == NUM_FPGA_THREADS && last_entry){
+			for (int j = 0; j < w->opt->n_threads - 1; ++j) {
+				pthread_mutex_lock (q->mut);
+				while (q->full) {
+					if(bwa_verbose >= 18){
+						printf ("producer: queue FULL.\n");
+					}
+					pthread_cond_wait (q->notFull, q->mut);
+				}
+				queueAdd (q, qe);
+				pthread_mutex_unlock (q->mut);
+				pthread_cond_signal (q->notEmpty);
+			}
+			// delete_queue_entry(qe); // Same heap mem for all last_entry queue.
+			break;
+		}
+		if(total_last_entries > NUM_FPGA_THREADS && last_entry){
+			if (total_last_entries == NUM_FPGA_THREADS + w->opt->n_threads - 1){
+				delete_queue_entry(qe);
+			}
 			break;
 		}
 
@@ -3530,14 +3549,14 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
         fprintf(stderr, "COMPILED WITH FPGA ENABLED\n");
 #endif
 
-
-		pthread_t s1, s2[NUM_FPGA_THREADS], s3;
+		pthread_t s1, s2[NUM_FPGA_THREADS], s3[opt->n_threads];
 		pthread_create (&s1, NULL, worker1_MT, &w);
 		for (int j = 0; j < NUM_FPGA_THREADS; ++j) pthread_create (&s2[j], NULL, fpga_worker, &qc[j]);
-		pthread_create (&s3, NULL, worker2_MT, &w2);
+		for (int j = 0; j < opt->n_threads; ++j) pthread_create (&s3[j], NULL, worker2_MT, &w2);
 		pthread_join (s1, NULL);
 		for (int j = 0; j < NUM_FPGA_THREADS; ++j) pthread_join (s2[j], NULL);
-		pthread_join (s3, NULL);
+		for (int j = 0; j < opt->n_threads; ++j) pthread_join (s3[j], NULL);
+		queue_t *qe;
 		queueDelete (w.queue1);
 		queueDelete (w2.queue1);
 
