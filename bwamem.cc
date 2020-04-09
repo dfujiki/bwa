@@ -44,7 +44,7 @@
 #define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
-#define NUM_FPGA_THREADS	3
+#define NUM_FPGA_THREADS	2
 #define BW			41
 
 #define SIM_SEEDING
@@ -1353,7 +1353,7 @@ struct SeedExPackageGenSim
 		buf->ty1.params = params;
 		query_ptr = query;
 		target_ptr = target;
-		padding = params.tlen - params.qlen;
+		padding = 10;// params.tlen - params.qlen;
 		qlen = params.qlen;
 		tlen = params.tlen;
 
@@ -1538,6 +1538,7 @@ void mem_chain2aln_to_fpga(const mem_opt_t *opt, const bntseq_t *bns, const uint
 	// ks_introsort_64(c->n, srt);
 
 	// for (k = c->n - 1; k >= 0; --k) {
+	kv_resize(mem_alnreg_t, *av, c->n);
 	for (k = 0; k < c->n; ++k) {
 		mem_alnreg_t *a;
 		// s = &c->seeds[(uint32_t)srt[k]];
@@ -1667,8 +1668,9 @@ void mem_chain2aln_to_fpga_sim(const mem_opt_t *opt, const bntseq_t *bns, const 
 
 	// retrieve the reference sequence
 	// rseq = bns_fetch_seq(bns, pac, &rmax[0], c->seeds[0].rbeg, &rmax[1], &rid);
-
 	// for (k = c->n - 1; k >= 0; --k) {
+	kv_resize(mem_alnreg_t, *av, c->n);
+	memset(av->a, 0, sizeof(mem_alnreg_t)*c->n);
 	for (k = 0; k < c->n; ++k) {
 		mem_alnreg_t *a;
 		// s = &c->seeds[(uint32_t)srt[k]];
@@ -1676,7 +1678,7 @@ void mem_chain2aln_to_fpga_sim(const mem_opt_t *opt, const bntseq_t *bns, const 
 
 		if(s->qbeg == 0 && ((s->qbeg + s->len) == l_query)){
 			a = kv_pushp(mem_alnreg_t, *av);
-			memset(a, 0, sizeof(mem_alnreg_t));
+			// memset(a, 0, sizeof(mem_alnreg_t));
 			a->w = aw[0] = aw[1] = opt->w;
 			a->score = a->truesc = -1;
 			a->rid = c->rid;
@@ -1693,7 +1695,7 @@ void mem_chain2aln_to_fpga_sim(const mem_opt_t *opt, const bntseq_t *bns, const 
 
 			uint32_t seq_id = write_buffer_entry1.size();
 			a = kv_pushp(mem_alnreg_t, *av);
-			memset(a, 0, sizeof(mem_alnreg_t));
+			// memset(a, 0, sizeof(mem_alnreg_t));
 			a->w = aw[0] = aw[1] = opt->w;
 			a->score = a->truesc = -1;
 			a->rid = c->rid;
@@ -1737,7 +1739,7 @@ void mem_chain2aln_to_fpga_sim(const mem_opt_t *opt, const bntseq_t *bns, const 
 				int qle, tle, qe, re, gtle, gscore, sc0 = a->score;
 				qe = s->qbeg + s->len;
 				re = s->rbeg + s->len - rmax[0];
-				assert(re >= 0);
+				// assert(re >= 0);
 
 				write_buffer2.push_back({});
 				write_buffer_entry2.push_back(&write_buffer2.back());
@@ -2636,17 +2638,19 @@ void seed_extension(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns,
 		else {
 			regs = kv_pushp(mem_alnreg_v, *alnregs);
 			memset(regs, 0, sizeof(mem_alnreg_v));
-			if ((rmax1 - rmax0) > 250 || run_fpga == 2 /* for debug */) {
-  			  	// Max allowed ref length
-				mem_chain2aln_cpu(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
-			}
-			else if (run_fpga == 3) {
+			if ((rmax1 - rmax0) <= 500 && run_fpga == 3) {
 				mem_chain2aln_to_fpga_sim(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1, f1v, data_out);
 			}
-  		  	else{
-  	 			f1v->extension_meta.back().chain_id = i;
-  	 			mem_chain2aln_to_fpga(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1, f1v, data_out);
-  		  	}
+			else { 
+				if ((rmax1 - rmax0) > 250 || run_fpga == 2 /* for debug */) {
+					// Max allowed ref length
+					mem_chain2aln_cpu(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1);
+				}
+				else{
+					f1v->extension_meta.back().chain_id = i;
+					mem_chain2aln_to_fpga(opt, bns, pac, l_seq, (uint8_t*)seq, p, regs,rmax0,rmax1, f1v, data_out);
+				}
+			}
 		}
 		//free(chn->a[i].seeds);
 	}
