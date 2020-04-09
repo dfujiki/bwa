@@ -138,9 +138,6 @@ typedef struct { // This struct is only used for the convenience of API.
 	int score, sub, alt_sc;
 } mem_aln_t;
 
-typedef struct {
-	bwtintv_v mem, mem1, *tmpv[2];
-} smem_aux_t;
 
 #ifndef ENABLE_FPGA
 typedef int pci_bar_handle_t;

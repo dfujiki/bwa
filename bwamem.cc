@@ -100,10 +100,10 @@ typedef struct {
 } queue;
 
 
-
-
-
-
+typedef struct {
+	bwtintv_v mem, mem1, *tmpv[2];
+	std::vector<uint64_t> rbegs;
+} smem_aux_t;
 
 
 
@@ -438,6 +438,7 @@ void mem_print_chain(const bntseq_t *bns, mem_chain_v *chn)
 
 void * smem_gen(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, int len, uint8_t *seq, void *buf, smem_aux_t *smems)
 {
+	int i, b, e, l_rep;
 	for (int i = 0; i < len; ++i) // convert to 2-bit encoding if we have not done so
 		seq[i] = seq[i] < 4? seq[i] : nst_nt4_table[(int)seq[i]];
 
@@ -449,6 +450,26 @@ void * smem_gen(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, int
 	aux->tmpv[0] = (bwtintv_v *)calloc(1, sizeof(bwtintv_v));
 	aux->tmpv[1] = (bwtintv_v *)calloc(1, sizeof(bwtintv_v));
 	mem_collect_intv(opt, bwt, len, seq, aux);
+	for (i = 0, b = e = l_rep = 0; i < aux->mem.n; ++i) { // compute frac_rep
+		bwtintv_t *p = &aux->mem.a[i];
+		int sb = (p->info>>32), se = (uint32_t)p->info;
+		if (p->x[2] <= opt->max_occ) continue;
+		if (sb > e) l_rep += e - b, b = sb, e = se;
+		else e = e > se? e : se;
+	}
+	l_rep += e - b;
+	for (i = 0; i < aux->mem.n; ++i) {
+		bwtintv_t *p = &aux->mem.a[i];
+		int step, count;
+		int64_t k;
+		// if (slen < opt->min_seed_len) continue; // ignore if too short or too repetitive
+		step = p->x[2] > opt->max_occ? p->x[2] / opt->max_occ : 1;
+		for (k = count = 0; k < p->x[2] && count < opt->max_occ; k += step, ++count) {
+			uint64_t rbeg = bwt_sa(bwt, p->x[0] + k); // this is the base coordinate in the forward-reverse referenc
+			aux->rbegs.push_back(rbeg);
+		}
+	}
+
 	free(aux->tmpv[0]->a); free(aux->tmpv[0]);
 	free(aux->tmpv[1]->a); free(aux->tmpv[1]);
 }
@@ -456,6 +477,7 @@ void * smem_gen(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, int
 mem_chain_v mem_chain_sim(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t *bns, int len, const uint8_t *seq, void *buf, smem_aux_t *smems)
 {
 	int i, b, e, l_rep;
+	int rbeg_cnt = 0;
 	int64_t l_pac = bns->l_pac;
 	mem_chain_v chain;
 	kbtree_t(chn) *tree;
@@ -487,7 +509,8 @@ mem_chain_v mem_chain_sim(const mem_opt_t *opt, const bwt_t *bwt, const bntseq_t
 			mem_chain_t tmp, *lower, *upper;
 			mem_seed_t s;
 			int rid, to_add = 0;
-			s.rbeg = tmp.pos = bwt_sa(bwt, p->x[0] + k); // this is the base coordinate in the forward-reverse reference
+			// s.rbeg = tmp.pos = bwt_sa(bwt, p->x[0] + k); // this is the base coordinate in the forward-reverse reference
+			s.rbeg = tmp.pos = aux->rbegs[rbeg_cnt++];
 			s.qbeg = p->info>>32;
 			s.score= s.len = slen;
 			rid = bns_intv2rid(bns, s.rbeg, s.rbeg + s.len);
