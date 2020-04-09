@@ -35,8 +35,8 @@
 #  include "malloc_wrap.h"
 #endif
 
-#define VERIFICATION
-// #define POSTPROCESS_TH_C
+// #define VERIFICATION
+#define POSTPROCESS_TH_C
 
 #define	MEM_16G		(1ULL << 34)
 // #define BATCH_LINE_LIMIT	16384
@@ -44,7 +44,8 @@
 #define TIMEOUT     BATCH_SIZE*100*1000      // Nanoseconds
 #define MIN(x,y)    ((x < y)? x : y)
 typedef fpga_pci_data_t fpga_pci_conn;
-#define NUM_FPGA_THREADS	4
+#define NUM_FPGA_THREADS	2
+#define NUM_W2_THREADS	2
 #define BW			41
 /* Theory on probability and scoring *ungapped* alignment
  *
@@ -74,7 +75,7 @@ typedef fpga_pci_data_t fpga_pci_conn;
 extern "C" {
 #endif
 
-#define QUEUESIZE 1000
+#define QUEUESIZE 10000
 typedef struct{
 	bseq1_t **seqs;
 	mem_alnreg_v ** regs;
@@ -2646,7 +2647,8 @@ void read_scores_from_fpga(const worker_t *w, fpga_pci_conn * fpga_pci_local,que
 		size_t read_buffer_size = total_lines * 64;
 
 #ifdef ENABLE_FPGA
-		fprintf(stderr, "Reading from FPGA [addr:0x%x, len:%d]\n", channel * MEM_16G + addr, read_buffer_size);
+		if(bwa_verbose >= 18)
+			fprintf(stderr, "Reading from FPGA [addr:0x%x, len:%d]\n", channel * MEM_16G + addr, read_buffer_size);
 		// pthread_mutex_lock (fpga_read_mut);
 		uint8_t * read_buffer = read_from_fpga(fpga_pci_local->read_fd,read_buffer_size,channel * MEM_16G + addr);
 
@@ -2874,7 +2876,7 @@ void worker1_ST(void *data){
 		pthread_mutex_lock (q->mut);
 		while (q->full) {
 			if(bwa_verbose >= 18){
-				printf ("producer: queue FULL.\n");
+				fprintf (stderr, "producer: queue FULL.\n");
 			}
 			pthread_cond_wait (q->notFull, q->mut);
 		}
@@ -2923,7 +2925,7 @@ void worker1_MT(void *data){
 		pthread_mutex_lock (q->mut);
 		while (q->full) {
 			if(bwa_verbose >= 18){
-				printf ("producer: queue FULL.\n");
+				fprintf (stderr, "producer: queue FULL.\n");
 			}
 			pthread_cond_wait (q->notFull, q->mut);
 		}
@@ -3026,7 +3028,8 @@ static void fpga_worker(void *data){
 				//  	do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
 				// }	
 				rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
-				fprintf(stderr, "--> L%d:st FPGA Status 0x%x --> 0x%x\n", tid, vled, vdip);
+				if(bwa_verbose >= 18)
+					fprintf(stderr, "--> L%d:st FPGA Status 0x%x --> 0x%x\n", tid, vled, vdip);
 
 				clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
 				while(1) {
@@ -3047,7 +3050,8 @@ static void fpga_worker(void *data){
 							fprintf(stderr,"Starting : %ld\n",qe->starting_read_id);
 						}
 						fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
-						fprintf(stderr, "TO:::FPGA Status 0x%x\n", vled);
+						if(bwa_verbose >= 18)
+							fprintf(stderr, "TO:::FPGA Status 0x%x\n", vled);
 						vdip = 0xffffffff;
 						rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 						do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
@@ -3056,7 +3060,8 @@ static void fpga_worker(void *data){
 					}
 				}
 
-				fprintf(stderr, "Return from FPGA. Timeout:%d Tdiff:%llu\n", time_out, timediff);
+				if(bwa_verbose >= 18)
+					fprintf(stderr, "Return from FPGA. Timeout:%d Tdiff:%llu\n", time_out, timediff);
 				pthread_mutex_unlock (qc->seedex_mut);
 
 				if(time_out == 0){
@@ -3102,7 +3107,8 @@ static void fpga_worker(void *data){
 					// 	fprintf(stderr, "[FPGA status] 0x%x waiting for ready...", vled);
 					// 	do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
 					// }	
-					fprintf(stderr, "--> R%d:st FPGA Status 0x%x --> 0x%x\n", tid, vled, vdip);
+					if(bwa_verbose >= 18)
+						fprintf(stderr, "--> R%d:st FPGA Status 0x%x --> 0x%x\n", tid, vled, vdip);
 					fpga_exec_cnt++;
 
 					// PCI Poke can be used for writing small amounts of data on the OCL bus
@@ -3127,7 +3133,8 @@ static void fpga_worker(void *data){
 								fprintf(stderr,"Starting : %ld\n",qe->starting_read_id);
 							}
 							fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled);
-							fprintf(stderr, "TO:::FPGA Status 0x%x\n", vled);
+							if(bwa_verbose >= 18)
+								fprintf(stderr, "TO:::FPGA Status 0x%x\n", vled);
 							vdip = 0xffffffff;
 							rc = fpga_pci_poke(fpga_pci_local->pci_bar_handle,0,vdip);
 							do { fpga_pci_peek(fpga_pci_local->pci_bar_handle,0,&vled); } while (vled != 0x0);
@@ -3136,7 +3143,8 @@ static void fpga_worker(void *data){
 						}
 					}
 
-					fprintf(stderr, "Return from FPGA. Timeout:%d Tdiff:%llu\n", time_out, timediff);
+					if(bwa_verbose >= 18)
+						fprintf(stderr, "Return from FPGA. Timeout:%d Tdiff:%llu\n", time_out, timediff);
 					pthread_mutex_unlock (qc->seedex_mut);
 
 					if(time_out == 0){
@@ -3266,7 +3274,7 @@ static void fpga_worker(void *data){
 		pthread_mutex_lock (q2->mut);
 		while (q2->full) {
 			if(bwa_verbose >= 18)
-				printf ("producer: queue FULL.\n");
+				fprintf (stderr, "producer: queue FULL.\n");
 			pthread_cond_wait (q2->notFull, q2->mut);
 		}
 		queueAdd (q2, qe);
@@ -3317,7 +3325,7 @@ void worker2_MT(void *data)
 		pthread_mutex_lock (q->mut);
 		while (q->empty) {
 			if(bwa_verbose >= 18)
-				printf (" (T3) queue EMPTY.\n");
+				fprintf (stderr, " (T3) queue EMPTY.\n");
 			pthread_cond_wait (q->notEmpty, q->mut);
 		}
 		queueDel(q, &qe);
@@ -3390,11 +3398,11 @@ void worker2_MT(void *data)
 		}
 
 		if(total_last_entries == NUM_FPGA_THREADS && last_entry){
-			for (int j = 0; j < w->opt->n_threads - 1; ++j) {
+			for (int j = 0; j < NUM_W2_THREADS; ++j) {
 				pthread_mutex_lock (q->mut);
 				while (q->full) {
 					if(bwa_verbose >= 18){
-						printf ("producer: queue FULL.\n");
+						fprintf (stderr, "producer: queue FULL.\n");
 					}
 					pthread_cond_wait (q->notFull, q->mut);
 				}
@@ -3406,7 +3414,7 @@ void worker2_MT(void *data)
 			break;
 		}
 		if(total_last_entries > NUM_FPGA_THREADS && last_entry){
-			if (total_last_entries == NUM_FPGA_THREADS + w->opt->n_threads - 1){
+			if (total_last_entries == NUM_FPGA_THREADS + NUM_W2_THREADS - 1){
 				delete_queue_entry(qe);
 			}
 			break;
@@ -3549,13 +3557,14 @@ void mem_process_seqs(const mem_opt_t *opt, const bwt_t *bwt, bntseq_t *bns, con
         fprintf(stderr, "COMPILED WITH FPGA ENABLED\n");
 #endif
 
-		pthread_t s1, s2[NUM_FPGA_THREADS], s3[opt->n_threads];
+		w2_total_last_entries = 0;
+		pthread_t s1, s2[NUM_FPGA_THREADS], s3[NUM_W2_THREADS];
 		pthread_create (&s1, NULL, worker1_MT, &w);
 		for (int j = 0; j < NUM_FPGA_THREADS; ++j) pthread_create (&s2[j], NULL, fpga_worker, &qc[j]);
-		for (int j = 0; j < opt->n_threads; ++j) pthread_create (&s3[j], NULL, worker2_MT, &w2);
+		for (int j = 0; j < NUM_W2_THREADS; ++j) pthread_create (&s3[j], NULL, worker2_MT, &w2);
 		pthread_join (s1, NULL);
 		for (int j = 0; j < NUM_FPGA_THREADS; ++j) pthread_join (s2[j], NULL);
-		for (int j = 0; j < opt->n_threads; ++j) pthread_join (s3[j], NULL);
+		for (int j = 0; j < NUM_W2_THREADS; ++j) pthread_join (s3[j], NULL);
 		queue_t *qe;
 		queueDelete (w.queue1);
 		queueDelete (w2.queue1);
